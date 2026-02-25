@@ -14,8 +14,9 @@ pub enum ToggleMode {
 #[derive(Debug, Clone, Deserialize, Default, Serialize)]
 pub struct ToggleWithList {
     pub mode: ToggleMode,
-    #[serde(default)]
     pub list: Vec<String>,
+    pub list_input: String,
+    pub list_input_active: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
