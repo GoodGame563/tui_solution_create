@@ -1,0 +1,27 @@
+name: python
+
+folders:
+  - src
+  - tests
+
+files:
+  - path: README.md
+    content: |
+      # {{name}}
+
+      Простой Python проект, созданный forge
+
+  - path: main.py
+    content: |
+      print("Hello from {{name}}!")
+
+  - path: requirements.txt
+    content: ""
+  - path: .gitignore
+    content: |
+      .venv
+
+commands:
+  - ["git", "init"]
+  - ["python", "-m", "venv", ".venv"]
+  - ["echo", "Окружение готово для {{name}}"]
