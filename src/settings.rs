@@ -1,0 +1,88 @@
+use crate::app::{App, SettingsCategory};
+use crate::structs::ToggleMode;
+
+/// Возвращает список настроек для текущей категории
+/// Формат кортежа: (label, description, is_enabled, has_templates, is_editing, edit_value, templates, is_list_editing, list_input)
+pub fn get_settings_for_category(app: &App) -> Vec<(&'static str, &'static str, bool, bool, bool, Option<String>, Vec<String>, bool, String)> {
+    let category = app.settings_categories[app.active_settings_category];
+    match category {
+        SettingsCategory::General => {
+            vec![
+                (
+                    "Recipes URL",
+                    "Path to recipes directory",
+                    !app.config.recipes_url.is_empty(),
+                    false,
+                    app.settings_edit_index.map(|(_, c)| c) == Some(0),
+                    Some(app.config.recipes_url.clone()),
+                    vec![],
+                    false,
+                    String::new(),
+                ),
+                (
+                    "Solutions URL",
+                    "Path to solutions directory",
+                    !app.config.solutions_url.is_empty(),
+                    false,
+                    app.settings_edit_index.map(|(_, c)| c) == Some(1),
+                    Some(app.config.solutions_url.clone()),
+                    vec![],
+                    false,
+                    String::new(),
+                ),
+            ]
+        }
+        SettingsCategory::Git => {
+            vec![
+                (
+                    "Init Git",
+                    "Initialize git repository",
+                    app.is_toggle_enabled(SettingsCategory::Git, 0),
+                    app.config.init_git.mode == ToggleMode::YesSome,
+                    false,
+                    None,
+                    app.get_toggle_templates(SettingsCategory::Git, 0),
+                    app.is_list_editing(0),
+                    app.get_list_input().to_string(),
+                ),
+                (
+                    "Create .gitignore",
+                    "Create local .gitignore file",
+                    app.is_toggle_enabled(SettingsCategory::Git, 1),
+                    app.config.create_local_gitignore.mode == ToggleMode::YesSome,
+                    false,
+                    None,
+                    app.get_toggle_templates(SettingsCategory::Git, 1),
+                    app.is_list_editing(1),
+                    app.get_list_input().to_string(),
+                ),
+            ]
+        }
+        SettingsCategory::Actions => {
+            vec![
+                (
+                    "Open Terminal",
+                    "Open terminal after creation",
+                    app.is_toggle_enabled(SettingsCategory::Actions, 0),
+                    app.config.open_terminal.mode == ToggleMode::YesSome,
+                    false,
+                    None,
+                    app.get_toggle_templates(SettingsCategory::Actions, 0),
+                    app.is_list_editing(0),
+                    app.get_list_input().to_string(),
+                ),
+                (
+                    "Open IDE",
+                    "Open IDE after creation",
+                    app.is_toggle_enabled(SettingsCategory::Actions, 1),
+                    app.config.open_ide.mode == ToggleMode::YesSome,
+                    false,
+                    None,
+                    app.get_toggle_templates(SettingsCategory::Actions, 1),
+                    app.is_list_editing(1),
+                    app.get_list_input().to_string(),
+                ),
+            ]
+        }
+    }
+}
