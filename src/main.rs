@@ -4,15 +4,16 @@ mod input;
 mod settings;
 mod structs;
 mod ui;
+mod utils;
 
 use std::{io, time::Duration};
 
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use ratatui::{backend::CrosstermBackend, Terminal};
+use ratatui::{Terminal, backend::CrosstermBackend};
 
 use app::App;
 use input::handle_input;
@@ -51,7 +52,8 @@ fn run_app<B: ratatui::backend::Backend>(
     let mut last_tick = std::time::Instant::now();
 
     loop {
-        terminal.draw(|f| ui(f, app))
+        terminal
+            .draw(|f| ui(f, app))
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
 
         let timeout = tick_rate

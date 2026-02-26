@@ -1,5 +1,5 @@
-use crossterm::event::{KeyCode, KeyModifiers};
 use crate::app::{App, AppState, SettingsCategory};
+use crossterm::event::{KeyCode, KeyModifiers};
 
 pub fn handle_input(app: &mut App, key: KeyCode, modifiers: KeyModifiers) -> Option<()> {
     if app.language_popup_open {
@@ -8,7 +8,7 @@ pub fn handle_input(app: &mut App, key: KeyCode, modifiers: KeyModifiers) -> Opt
     }
 
     if app.template_popup_open {
-        handle_template_popup_input(app, key);
+        handle_recipes_popup_input(app, key);
         return None;
     }
 
@@ -56,22 +56,22 @@ fn handle_language_popup_input(app: &mut App, key: KeyCode) {
     }
 }
 
-fn handle_template_popup_input(app: &mut App, key: KeyCode) {
+fn handle_recipes_popup_input(app: &mut App, key: KeyCode) {
     match key {
         KeyCode::Esc => {
-            app.close_template_popup();
+            app.close_recipes_popup();
         }
         KeyCode::Enter => {
-            app.save_template_popup();
+            app.save_recipes_popup();
         }
         KeyCode::Char(' ') => {
-            app.toggle_template_popup_selection();
+            app.toggle_recipes_popup_selection();
         }
         KeyCode::Up => {
-            app.move_template_popup_selection(-1);
+            app.move_recipes_popup_selection(-1);
         }
         KeyCode::Down => {
-            app.move_template_popup_selection(1);
+            app.move_recipes_popup_selection(1);
         }
         _ => {}
     }
@@ -94,7 +94,10 @@ fn handle_input_state(app: &mut App, key: KeyCode, modifiers: KeyModifiers) {
             }
         }
         KeyCode::Char('q') | KeyCode::Char('Q') => {
-            if app.settings_edit_index.is_none() && app.list_edit_index.is_none() && !app.input_active {
+            if app.settings_edit_index.is_none()
+                && app.list_edit_index.is_none()
+                && !app.input_active
+            {
                 std::process::exit(0);
             }
             if app.input_active && app.active_main_tab == 0 {
@@ -108,7 +111,10 @@ fn handle_input_state(app: &mut App, key: KeyCode, modifiers: KeyModifiers) {
             }
         }
         KeyCode::Char('c') | KeyCode::Char('C') => {
-            if app.settings_edit_index.is_some() || app.list_edit_index.is_some() || app.input_active {
+            if app.settings_edit_index.is_some()
+                || app.list_edit_index.is_some()
+                || app.input_active
+            {
                 if app.input_active && app.active_main_tab == 0 {
                     app.insert_char('c');
                 } else if app.active_main_tab == 1 {
@@ -121,14 +127,17 @@ fn handle_input_state(app: &mut App, key: KeyCode, modifiers: KeyModifiers) {
             } else if app.active_main_tab == 1 {
                 let category = app.settings_categories[app.active_settings_category];
                 if category == SettingsCategory::Git || category == SettingsCategory::Actions {
-                    app.open_template_popup();
+                    app.open_recipes_popup();
                 }
             }
         }
         KeyCode::Enter => {
             if app.active_main_tab == 0 {
                 if !app.url_input.is_empty() {
-                    app.state = AppState::Creating { progress: 0.0, stage: 0 };
+                    app.state = AppState::Creating {
+                        progress: 0.0,
+                        stage: 0,
+                    };
                     app.input_active = false;
                 } else {
                     app.input_active = !app.input_active;
@@ -150,7 +159,7 @@ fn handle_input_state(app: &mut App, key: KeyCode, modifiers: KeyModifiers) {
         }
         KeyCode::Esc => {
             if app.template_popup_open {
-                app.close_template_popup();
+                app.close_recipes_popup();
             } else if app.language_popup_open {
                 app.close_language_popup();
             } else if app.input_active {
@@ -202,7 +211,7 @@ fn handle_input_state(app: &mut App, key: KeyCode, modifiers: KeyModifiers) {
         }
         KeyCode::Up => {
             if app.template_popup_open {
-                app.move_template_popup_selection(-1);
+                app.move_recipes_popup_selection(-1);
             } else if app.language_popup_open && !app.language_popup_in_modal {
                 app.move_language_selection(-1);
             } else if app.input_active && app.active_main_tab == 0 {
@@ -219,7 +228,7 @@ fn handle_input_state(app: &mut App, key: KeyCode, modifiers: KeyModifiers) {
         }
         KeyCode::Down => {
             if app.template_popup_open {
-                app.move_template_popup_selection(1);
+                app.move_recipes_popup_selection(1);
             } else if app.language_popup_open && !app.language_popup_in_modal {
                 app.move_language_selection(1);
             } else if app.input_active && app.active_main_tab == 0 {
@@ -263,8 +272,11 @@ fn handle_input_state(app: &mut App, key: KeyCode, modifiers: KeyModifiers) {
         }
         KeyCode::Char(' ') => {
             if app.template_popup_open {
-                app.toggle_template_popup_selection();
-            } else if app.active_main_tab == 1 && app.settings_edit_index.is_none() && app.list_edit_index.is_none() {
+                app.toggle_recipes_popup_selection();
+            } else if app.active_main_tab == 1
+                && app.settings_edit_index.is_none()
+                && app.list_edit_index.is_none()
+            {
                 app.toggle_setting();
             }
         }

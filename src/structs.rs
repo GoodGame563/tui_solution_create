@@ -3,8 +3,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Deserialize, Default, Serialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum ToggleMode {
-    No,
     #[default]
+    No,
     Yes,
     YesSome,
 }
@@ -46,17 +46,17 @@ impl Default for AppConfig {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 pub struct ConfigFileCreation {
     #[serde(default)]
     pub name: String,
     pub folders: Vec<String>,
     pub files: Vec<FileEntry>,
     #[serde(default)]
-    pub commands: Vec<Vec<String>>
+    pub commands: Vec<Vec<String>>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 pub struct FileEntry {
     pub path: String,
     pub content: String,

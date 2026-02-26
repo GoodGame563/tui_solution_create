@@ -1,13 +1,13 @@
+use crate::app::{App, AppState, SettingsCategory};
+use crate::settings::get_settings_for_category;
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     prelude::Color,
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Gauge, List, ListItem, Padding, Paragraph, Tabs, Clear},
+    widgets::{Block, Borders, Clear, Gauge, List, ListItem, Padding, Paragraph, Tabs},
 };
-use crate::app::{App, AppState, SettingsCategory};
-use crate::settings::get_settings_for_category;
 
 pub fn ui(f: &mut Frame, app: &App) {
     let size = f.area();
@@ -63,9 +63,12 @@ fn render_tabs(f: &mut Frame, app: &App, area: Rect) {
             Block::default()
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(Color::DarkGray))
-                .title(Line::from(vec![
-                    Span::styled("solution_create", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-                ]))
+                .title(Line::from(vec![Span::styled(
+                    "solution_create",
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                )]))
                 .title_alignment(Alignment::Center),
         )
         .select(app.active_main_tab)
@@ -82,17 +85,17 @@ fn render_tabs(f: &mut Frame, app: &App, area: Rect) {
 
 fn render_status_bar(f: &mut Frame, app: &App, area: Rect) {
     let status_text = if let AppState::Creating { stage, .. } = &app.state {
-        Line::from(vec![
-            Span::styled(app.creation_stages[*stage], Style::default().fg(Color::Yellow)),
-        ])
+        Line::from(vec![Span::styled(
+            app.creation_stages[*stage],
+            Style::default().fg(Color::Yellow),
+        )])
     } else if let AppState::Done = &app.state {
-        Line::from(vec![
-            Span::styled("Project created! Press Enter to continue", Style::default().fg(Color::Green)),
-        ])
+        Line::from(vec![Span::styled(
+            "Project created! Press Enter to continue",
+            Style::default().fg(Color::Green),
+        )])
     } else if let Some((msg, _)) = &app.status_message {
-        Line::from(vec![
-            Span::raw(msg.clone()),
-        ])
+        Line::from(vec![Span::raw(msg.clone())])
     } else if app.active_main_tab == 0 {
         if app.input_active {
             Line::from(vec![
@@ -107,7 +110,7 @@ fn render_status_bar(f: &mut Frame, app: &App, area: Rect) {
             Line::from(vec![
                 Span::styled("Enter", Style::default().fg(Color::Green)),
                 Span::raw(" Edit URL  "),
-                Span::styled("ё", Style::default().fg(Color::Cyan)),
+                Span::styled("~", Style::default().fg(Color::Cyan)),
                 Span::raw(" Language  "),
                 Span::styled("↑/↓", Style::default().fg(Color::Cyan)),
                 Span::raw(" Scroll  "),
@@ -160,7 +163,7 @@ fn render_status_bar(f: &mut Frame, app: &App, area: Rect) {
                 Span::styled("Enter/Space", Style::default().fg(Color::Green)),
                 Span::raw(" Toggle  "),
                 Span::styled("c", Style::default().fg(Color::Cyan)),
-                Span::raw(" Templates  "),
+                Span::raw(" Select recipes  "),
                 Span::styled("↑/↓", Style::default().fg(Color::Cyan)),
                 Span::raw(" Navigate  "),
                 Span::styled("←/→", Style::default().fg(Color::Magenta)),
@@ -193,17 +196,21 @@ fn render_recipes_tab(f: &mut Frame, app: &App, area: Rect) {
             let left_chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .margin(1)
-                .constraints([
-                    Constraint::Length(3),
-                    Constraint::Min(5),
-                ])
+                .constraints([Constraint::Length(3), Constraint::Min(5)])
                 .split(area);
 
             let selected_lang = app.selected_language();
             let lang_color = get_language_color(&selected_lang);
 
             let input_display = if app.input_active {
-                let cursor_char = if (std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() / 500) % 2 == 0 {
+                let cursor_char = if (std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis()
+                    / 500)
+                    % 2
+                    == 0
+                {
                     "█"
                 } else {
                     " "
@@ -243,7 +250,11 @@ fn render_recipes_tab(f: &mut Frame, app: &App, area: Rect) {
             f.render_widget(input_widget, left_chunks[0]);
 
             let visible_projects = area.height.saturating_sub(6) as usize;
-            let visible_projects = if visible_projects < 1 { 1 } else { visible_projects };
+            let visible_projects = if visible_projects < 1 {
+                1
+            } else {
+                visible_projects
+            };
             let start = app.projects_scroll;
 
             let projects: Vec<ListItem> = app
@@ -312,7 +323,11 @@ fn render_creation_screen(f: &mut Frame, app: &App, area: Rect, progress: f64, s
         .split(area);
 
     let title = Paragraph::new("Creating Solution...")
-        .style(Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
+        .style(
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        )
         .alignment(Alignment::Center)
         .block(
             Block::default()
@@ -329,31 +344,44 @@ fn render_creation_screen(f: &mut Frame, app: &App, area: Rect, progress: f64, s
         .enumerate()
         .map(|(i, s)| {
             let style = if i == stage {
-                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
             } else if i < stage {
                 Style::default().fg(Color::Green)
             } else {
                 Style::default().fg(Color::DarkGray)
             };
-            let prefix = if i < stage { "[OK]" } else if i == stage { "[..]" } else { "[  ]" };
-            ListItem::new(Line::from(Span::styled(format!(" {} {}", prefix, s), style)))
+            let prefix = if i < stage {
+                "[OK]"
+            } else if i == stage {
+                "[..]"
+            } else {
+                "[  ]"
+            };
+            ListItem::new(Line::from(Span::styled(
+                format!(" {} {}", prefix, s),
+                style,
+            )))
         })
         .collect();
 
-    let stages_list = List::new(stages)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::White))
-                .padding(Padding::horizontal(1)),
-        );
+    let stages_list = List::new(stages).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::White))
+            .padding(Padding::horizontal(1)),
+    );
 
     f.render_widget(stages_list, chunks[1]);
 
     let gauge = Gauge::default()
         .gauge_style(Style::default().fg(Color::Green))
         .percent((progress * 100.0) as u16)
-        .label(Span::styled(format!("{:.0}%", progress * 100.0), Style::default().fg(Color::White)));
+        .label(Span::styled(
+            format!("{:.0}%", progress * 100.0),
+            Style::default().fg(Color::White),
+        ));
 
     f.render_widget(gauge, chunks[2]);
 }
@@ -362,13 +390,11 @@ fn render_settings_tab(f: &mut Frame, app: &App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .margin(1)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Min(5),
-        ])
+        .constraints([Constraint::Length(3), Constraint::Min(5)])
         .split(area);
 
-    let category_tabs: Vec<Line> = app.settings_categories
+    let category_tabs: Vec<Line> = app
+        .settings_categories
         .iter()
         .enumerate()
         .map(|(i, cat)| {
@@ -401,65 +427,113 @@ fn render_settings_tab(f: &mut Frame, app: &App, area: Rect) {
     let items: Vec<ListItem> = settings_items
         .iter()
         .enumerate()
-        .map(|(i, (label, description, is_enabled, has_templates, is_editing, edit_value, templates, is_list_editing, list_input))| {
-            let is_selected = i == app.settings_cursor;
+        .map(
+            |(
+                i,
+                (
+                    label,
+                    description,
+                    is_enabled,
+                    has_templates,
+                    is_editing,
+                    edit_value,
+                    templates,
+                    is_list_editing,
+                    list_input,
+                ),
+            )| {
+                let is_selected = i == app.settings_cursor;
 
-            let checkbox = if *is_enabled {
-                if *has_templates {
-                    Span::styled("[~]", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+                let checkbox = if *is_enabled {
+                    if *has_templates {
+                        Span::styled(
+                            "[~]",
+                            Style::default()
+                                .fg(Color::Yellow)
+                                .add_modifier(Modifier::BOLD),
+                        )
+                    } else {
+                        Span::styled(
+                            "[X]",
+                            Style::default()
+                                .fg(Color::Green)
+                                .add_modifier(Modifier::BOLD),
+                        )
+                    }
                 } else {
-                    Span::styled("[X]", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
-                }
-            } else {
-                Span::styled("[ ]", Style::default().fg(Color::DarkGray))
-            };
-
-            let row_style = if is_selected {
-                Style::default()
-                    .fg(Color::Black)
-                    .bg(Color::Rgb(0, 150, 0))
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(Color::White)
-            };
-
-            let value_display = if *is_list_editing {
-                let cursor_char = if (std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() / 500) % 2 == 0 {
-                    "█"
-                } else {
-                    " "
+                    Span::styled("[ ]", Style::default().fg(Color::DarkGray))
                 };
-                let before: String = list_input.chars().take(app.get_list_input_cursor()).collect();
-                let after: String = list_input.chars().skip(app.get_list_input_cursor()).collect();
-                format!(" {}{}{}", before, cursor_char, after)
-            } else if *is_editing {
-                let cursor_char = if (std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() / 500) % 2 == 0 {
-                    "▌"
+
+                let row_style = if is_selected {
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(Color::Rgb(0, 150, 0))
+                        .add_modifier(Modifier::BOLD)
                 } else {
-                    " "
+                    Style::default().fg(Color::White)
                 };
-                if let Some(val) = edit_value {
-                    let before: String = val.chars().take(app.settings_edit_cursor).collect();
-                    let after: String = val.chars().skip(app.settings_edit_cursor).collect();
+
+                let value_display = if *is_list_editing {
+                    let cursor_char = if (std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_millis()
+                        / 500)
+                        % 2
+                        == 0
+                    {
+                        "█"
+                    } else {
+                        " "
+                    };
+                    let before: String = list_input
+                        .chars()
+                        .take(app.get_list_input_cursor())
+                        .collect();
+                    let after: String = list_input
+                        .chars()
+                        .skip(app.get_list_input_cursor())
+                        .collect();
                     format!(" {}{}{}", before, cursor_char, after)
+                } else if *is_editing {
+                    let cursor_char = if (std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_millis()
+                        / 500)
+                        % 2
+                        == 0
+                    {
+                        "▌"
+                    } else {
+                        " "
+                    };
+                    if let Some(val) = edit_value {
+                        let before: String = val.chars().take(app.settings_edit_cursor).collect();
+                        let after: String = val.chars().skip(app.settings_edit_cursor).collect();
+                        format!(" {}{}{}", before, cursor_char, after)
+                    } else {
+                        String::new()
+                    }
+                } else if !edit_value.as_ref().map(|s| s.is_empty()).unwrap_or(true) {
+                    format!(" {}", edit_value.as_ref().unwrap())
+                } else if !templates.is_empty() {
+                    format!(" ({})", templates.join(", "))
                 } else {
                     String::new()
-                }
-            } else if !edit_value.as_ref().map(|s| s.is_empty()).unwrap_or(true) {
-                format!(" {}", edit_value.as_ref().unwrap())
-            } else if !templates.is_empty() {
-                format!(" ({})", templates.join(", "))
-            } else {
-                String::new()
-            };
+                };
 
-            let content = Line::from(vec![
-                Span::styled(format!("{}  {:<18}", checkbox, label), row_style),
-                Span::styled(description.to_string(), Style::default().fg(Color::DarkGray)),
-                Span::styled(value_display, Style::default().fg(Color::Cyan)),
-            ]);
-            ListItem::new(content)
-        })
+                let content = Line::from(vec![
+                    Span::styled(format!("{}  {:<18}", checkbox, label), row_style),
+                    Span::styled(
+                        description.to_string(),
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                    Span::styled(value_display, Style::default().fg(Color::Cyan)),
+                ]);
+                ListItem::new(content)
+            },
+        )
         .collect();
 
     let settings_list = List::new(items)
@@ -503,7 +577,10 @@ fn render_language_popup(f: &mut Frame, app: &App) {
             };
 
             let marker = if is_selected { "> " } else { "  " };
-            ListItem::new(Line::from(Span::styled(format!("{}{}", marker, lang), style)))
+            ListItem::new(Line::from(Span::styled(
+                format!("{}{}", marker, lang),
+                style,
+            )))
         })
         .collect();
 
@@ -525,31 +602,25 @@ fn render_language_popup(f: &mut Frame, app: &App) {
         " Select Language "
     };
 
-    let search_widget = Paragraph::new(search_text)
-        .style(search_style)
-        .block(
-            Block::default()
-                .borders(Borders::BOTTOM)
-                .border_style(Style::default().fg(Color::DarkGray))
-                .title(" Search ")
-                .padding(Padding::horizontal(1)),
-        );
+    let search_widget = Paragraph::new(search_text).style(search_style).block(
+        Block::default()
+            .borders(Borders::BOTTOM)
+            .border_style(Style::default().fg(Color::DarkGray))
+            .title(" Search ")
+            .padding(Padding::horizontal(1)),
+    );
 
-    let list = List::new(items)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Cyan))
-                .title(title)
-                .padding(Padding::horizontal(1)),
-        );
+    let list = List::new(items).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Cyan))
+            .title(title)
+            .padding(Padding::horizontal(1)),
+    );
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Min(3),
-        ])
+        .constraints([Constraint::Length(3), Constraint::Min(3)])
         .split(area);
 
     f.render_widget(search_widget, chunks[0]);
@@ -561,7 +632,8 @@ fn render_template_popup(f: &mut Frame, app: &App) {
 
     f.render_widget(Clear, area);
 
-    let items: Vec<ListItem> = app.template_popup_templates
+    let items: Vec<ListItem> = app
+        .template_popup_recipes
         .iter()
         .enumerate()
         .map(|(i, template)| {
@@ -569,7 +641,12 @@ fn render_template_popup(f: &mut Frame, app: &App) {
             let is_checked = app.template_popup_selected.get(i).copied().unwrap_or(false);
 
             let checkbox = if is_checked {
-                Span::styled("[X]", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
+                Span::styled(
+                    "[X]",
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
+                )
             } else {
                 Span::styled("[ ]", Style::default().fg(Color::DarkGray))
             };
@@ -592,14 +669,13 @@ fn render_template_popup(f: &mut Frame, app: &App) {
         })
         .collect();
 
-    let list = List::new(items)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Cyan))
-                .title(" Select Recipes (Space to toggle, Enter to save) ")
-                .padding(Padding::horizontal(1)),
-        );
+    let list = List::new(items).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Cyan))
+            .title(" Select Recipes (Space to toggle, Enter to save) ")
+            .padding(Padding::horizontal(1)),
+    );
 
     f.render_widget(list, area);
 }

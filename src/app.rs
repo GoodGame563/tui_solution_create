@@ -1,6 +1,7 @@
-use std::{fs, time::Duration};
-use ratatui::prelude::Color;
 use crate::structs::{AppConfig, ToggleMode, ToggleWithList};
+use crate::utils::get_all_config;
+use ratatui::prelude::Color;
+use std::{fs, time::Duration};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum SettingsCategory {
@@ -11,7 +12,11 @@ pub enum SettingsCategory {
 
 impl SettingsCategory {
     pub fn all() -> Vec<SettingsCategory> {
-        vec![SettingsCategory::General, SettingsCategory::Git, SettingsCategory::Actions]
+        vec![
+            SettingsCategory::General,
+            SettingsCategory::Git,
+            SettingsCategory::Actions,
+        ]
     }
 
     pub fn title(&self) -> &'static str {
@@ -56,7 +61,7 @@ pub struct App {
     pub language_filtered_index: usize,
     pub status_message: Option<(String, Duration)>,
     pub template_popup_open: bool,
-    pub template_popup_templates: Vec<String>,
+    pub template_popup_recipes: Vec<String>,
     pub template_popup_selected: Vec<bool>,
     pub template_popup_scroll: usize,
     pub template_popup_source: Option<(SettingsCategory, usize)>,
@@ -64,7 +69,15 @@ pub struct App {
 
 impl App {
     pub fn new() -> Self {
-        let languages = Self::load_languages();
+        let config: AppConfig = match confy::load("tui-solution-create", None) {
+            Ok(c) => c,
+            Err(e) => {
+                let cfg = AppConfig::default();
+                _ = confy::store("tui-solution-create", None, &cfg);
+                cfg
+            }
+        };
+        let languages = Self::load_languages(&config);
         Self {
             main_tabs: vec!["Recipes", "Settings"],
             active_main_tab: 0,
@@ -83,7 +96,7 @@ impl App {
                 ("Rust".to_string(), "blockchain-node".to_string()),
             ],
             projects_scroll: 0,
-            config: AppConfig::default(),
+            config: config,
             settings_categories: SettingsCategory::all(),
             active_settings_category: 0,
             settings_cursor: 0,
@@ -107,48 +120,38 @@ impl App {
             language_filtered_index: 0,
             status_message: None,
             template_popup_open: false,
-            template_popup_templates: Vec::new(),
+            template_popup_recipes: Vec::new(),
             template_popup_selected: Vec::new(),
             template_popup_scroll: 0,
             template_popup_source: None,
         }
     }
 
-    fn load_languages() -> Vec<String> {
+    fn load_languages(config: &AppConfig) -> Vec<String> {
         let mut langs = Vec::new();
-        if let Ok(entries) = fs::read_dir("recipes") {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.extension().and_then(|s| s.to_str()) == Some("yaml") {
-                    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                        langs.push(stem.to_string());
-                    }
-                }
-            }
+        for config in get_all_config(&config.recipes_url){
+            langs.push(config.name);
         }
         if langs.is_empty() {
-            langs.push("python".to_string());
+            langs.push("None".to_string());
         }
         langs.sort();
         langs
     }
 
     pub fn selected_language(&self) -> String {
-        self.languages.get(self.selected_language_index)
+        self.languages
+            .get(self.selected_language_index)
             .cloned()
             .unwrap_or_else(|| "unknown".to_string())
     }
 
-    pub fn cycle_language(&mut self) {
-        if !self.languages.is_empty() {
-            self.selected_language_index = (self.selected_language_index + 1) % self.languages.len();
-        }
-    }
 
     pub fn open_language_popup(&mut self) {
         self.language_popup_open = true;
         self.language_popup_in_modal = false;
         self.language_search.clear();
+        self.languages = Self::load_languages(&self.config);
         self.language_search_cursor = 0;
         self.language_filtered_index = 0;
     }
@@ -173,20 +176,13 @@ impl App {
         self.language_filtered_index = 0;
     }
 
-    pub fn open_template_popup(&mut self) {
+    pub fn open_recipes_popup(&mut self) {
         let category = self.settings_categories[self.active_settings_category];
         let idx = self.settings_cursor;
 
         let mut recipes = Vec::new();
-        if let Ok(entries) = fs::read_dir("recipes") {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.extension().and_then(|s| s.to_str()) == Some("yaml") {
-                    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                        recipes.push(stem.to_string());
-                    }
-                }
-            }
+        for config in get_all_config(&self.config.recipes_url){
+            recipes.push(config.name);
         }
         recipes.sort();
 
@@ -196,8 +192,10 @@ impl App {
             Vec::new()
         };
 
-        self.template_popup_templates = recipes;
-        self.template_popup_selected = self.template_popup_templates.iter()
+        self.template_popup_recipes = recipes;
+        self.template_popup_selected = self
+            .template_popup_recipes
+            .iter()
             .map(|r| current_selected.contains(r))
             .collect();
         self.template_popup_scroll = 0;
@@ -205,17 +203,24 @@ impl App {
         self.template_popup_open = true;
     }
 
-    pub fn close_template_popup(&mut self) {
+    pub fn close_recipes_popup(&mut self) {
         self.template_popup_open = false;
-        self.template_popup_templates.clear();
+        self.template_popup_recipes.clear();
         self.template_popup_selected.clear();
         self.template_popup_source = None;
     }
 
-    pub fn save_template_popup(&mut self) {
-        let selected: Vec<String> = self.template_popup_templates.iter()
+    pub fn save_recipes_popup(&mut self) {
+        let selected: Vec<String> = self
+            .template_popup_recipes
+            .iter()
             .enumerate()
-            .filter(|(i, _)| self.template_popup_selected.get(*i).copied().unwrap_or(false))
+            .filter(|(i, _)| {
+                self.template_popup_selected
+                    .get(*i)
+                    .copied()
+                    .unwrap_or(false)
+            })
             .map(|(_, r)| r.clone())
             .collect();
         let any_selected = !selected.is_empty();
@@ -230,10 +235,11 @@ impl App {
                 };
             }
         }
-        self.close_template_popup();
+
+        self.close_recipes_popup()
     }
 
-    pub fn toggle_template_popup_selection(&mut self) {
+    pub fn toggle_recipes_popup_selection(&mut self) {
         if !self.template_popup_selected.is_empty() {
             let idx = self.template_popup_scroll;
             if idx < self.template_popup_selected.len() {
@@ -242,9 +248,9 @@ impl App {
         }
     }
 
-    pub fn move_template_popup_selection(&mut self, direction: i8) {
+    pub fn move_recipes_popup_selection(&mut self, direction: i8) {
         if direction > 0 {
-            if self.template_popup_scroll < self.template_popup_templates.len().saturating_sub(1) {
+            if self.template_popup_scroll < self.template_popup_recipes.len().saturating_sub(1) {
                 self.template_popup_scroll += 1;
             }
         } else {
@@ -256,14 +262,19 @@ impl App {
 
     pub fn get_filtered_languages(&self) -> Vec<(usize, String)> {
         if self.language_search.is_empty() {
-            self.languages.iter()
+            self.languages
+                .iter()
                 .enumerate()
                 .map(|(i, lang)| (i, lang.clone()))
                 .collect()
         } else {
-            self.languages.iter()
+            self.languages
+                .iter()
                 .enumerate()
-                .filter(|(_, lang)| lang.to_lowercase().contains(&self.language_search.to_lowercase()))
+                .filter(|(_, lang)| {
+                    lang.to_lowercase()
+                        .contains(&self.language_search.to_lowercase())
+                })
                 .map(|(i, lang)| (i, lang.clone()))
                 .collect()
         }
@@ -316,7 +327,8 @@ impl App {
     }
 
     pub fn next_settings_category(&mut self) {
-        self.active_settings_category = (self.active_settings_category + 1) % self.settings_categories.len();
+        self.active_settings_category =
+            (self.active_settings_category + 1) % self.settings_categories.len();
         self.settings_cursor = 0;
         self.list_edit_index = None;
     }
@@ -457,22 +469,22 @@ impl App {
         self.config.open_ide.list_input_active = false;
     }
 
-    pub fn get_toggle_for_setting(&mut self, category: SettingsCategory, index: usize) -> Option<&mut ToggleWithList> {
+    pub fn get_toggle_for_setting(
+        &mut self,
+        category: SettingsCategory,
+        index: usize,
+    ) -> Option<&mut ToggleWithList> {
         match category {
-            SettingsCategory::Git => {
-                match index {
-                    0 => Some(&mut self.config.init_git),
-                    1 => Some(&mut self.config.create_local_gitignore),
-                    _ => None,
-                }
-            }
-            SettingsCategory::Actions => {
-                match index {
-                    0 => Some(&mut self.config.open_terminal),
-                    1 => Some(&mut self.config.open_ide),
-                    _ => None,
-                }
-            }
+            SettingsCategory::Git => match index {
+                0 => Some(&mut self.config.init_git),
+                1 => Some(&mut self.config.create_local_gitignore),
+                _ => None,
+            },
+            SettingsCategory::Actions => match index {
+                0 => Some(&mut self.config.open_terminal),
+                1 => Some(&mut self.config.open_ide),
+                _ => None,
+            },
             _ => None,
         }
     }
@@ -483,25 +495,23 @@ impl App {
         let settings_cursor = self.settings_cursor;
 
         match category {
-            SettingsCategory::General => {
-                match settings_cursor {
-                    0 => {
-                        self.config.recipes_url = if self.config.recipes_url.is_empty() {
-                            "recipes".to_string()
-                        } else {
-                            String::new()
-                        };
-                    }
-                    1 => {
-                        self.config.solutions_url = if self.config.solutions_url.is_empty() {
-                            "solutions".to_string()
-                        } else {
-                            String::new()
-                        };
-                    }
-                    _ => {}
+            SettingsCategory::General => match settings_cursor {
+                0 => {
+                    self.config.recipes_url = if self.config.recipes_url.is_empty() {
+                        "recipes".to_string()
+                    } else {
+                        String::new()
+                    };
                 }
-            }
+                1 => {
+                    self.config.solutions_url = if self.config.solutions_url.is_empty() {
+                        "solutions".to_string()
+                    } else {
+                        String::new()
+                    };
+                }
+                _ => {}
+            },
             SettingsCategory::Git | SettingsCategory::Actions => {
                 if let Some(toggle) = self.get_toggle_for_setting(category, settings_cursor) {
                     toggle.mode = match toggle.mode {
@@ -524,8 +534,12 @@ impl App {
                 *stage += 1;
                 if *stage >= self.creation_stages.len() {
                     self.state = AppState::Done;
-                    self.projects.insert(0, (self.selected_language(), self.url_input.clone()));
-                    self.set_status(&format!("Project '{}' created!", self.url_input), Color::Green);
+                    self.projects
+                        .insert(0, (self.selected_language(), self.url_input.clone()));
+                    self.set_status(
+                        &format!("Project '{}' created!", self.url_input),
+                        Color::Green,
+                    );
                     self.url_input.clear();
                     self.cursor_position = 0;
                 }
@@ -666,7 +680,8 @@ impl App {
         if let Some(idx) = self.list_edit_index {
             let category = self.settings_categories[self.active_settings_category];
             if let Some(toggle) = self.get_toggle_for_setting(category, idx) {
-                let new_list: Vec<String> = toggle.list_input
+                let new_list: Vec<String> = toggle
+                    .list_input
                     .split(',')
                     .map(|s| s.trim().to_string())
                     .filter(|s| !s.is_empty())
@@ -708,40 +723,44 @@ impl App {
 
     pub fn is_toggle_enabled(&self, category: SettingsCategory, index: usize) -> bool {
         match category {
-            SettingsCategory::Git => {
-                match index {
-                    0 => matches!(self.config.init_git.mode, ToggleMode::Yes | ToggleMode::YesSome),
-                    1 => matches!(self.config.create_local_gitignore.mode, ToggleMode::Yes | ToggleMode::YesSome),
-                    _ => false,
-                }
-            }
-            SettingsCategory::Actions => {
-                match index {
-                    0 => matches!(self.config.open_terminal.mode, ToggleMode::Yes | ToggleMode::YesSome),
-                    1 => matches!(self.config.open_ide.mode, ToggleMode::Yes | ToggleMode::YesSome),
-                    _ => false,
-                }
-            }
+            SettingsCategory::Git => match index {
+                0 => matches!(
+                    self.config.init_git.mode,
+                    ToggleMode::Yes | ToggleMode::YesSome
+                ),
+                1 => matches!(
+                    self.config.create_local_gitignore.mode,
+                    ToggleMode::Yes | ToggleMode::YesSome
+                ),
+                _ => false,
+            },
+            SettingsCategory::Actions => match index {
+                0 => matches!(
+                    self.config.open_terminal.mode,
+                    ToggleMode::Yes | ToggleMode::YesSome
+                ),
+                1 => matches!(
+                    self.config.open_ide.mode,
+                    ToggleMode::Yes | ToggleMode::YesSome
+                ),
+                _ => false,
+            },
             _ => false,
         }
     }
 
-    pub fn get_toggle_templates(&self, category: SettingsCategory, index: usize) -> Vec<String> {
+    pub fn get_toggle_recipes(&self, category: SettingsCategory, index: usize) -> Vec<String> {
         match category {
-            SettingsCategory::Git => {
-                match index {
-                    0 => self.config.init_git.list.clone(),
-                    1 => self.config.create_local_gitignore.list.clone(),
-                    _ => vec![],
-                }
-            }
-            SettingsCategory::Actions => {
-                match index {
-                    0 => self.config.open_terminal.list.clone(),
-                    1 => self.config.open_ide.list.clone(),
-                    _ => vec![],
-                }
-            }
+            SettingsCategory::Git => match index {
+                0 => self.config.init_git.list.clone(),
+                1 => self.config.create_local_gitignore.list.clone(),
+                _ => vec![],
+            },
+            SettingsCategory::Actions => match index {
+                0 => self.config.open_terminal.list.clone(),
+                1 => self.config.open_ide.list.clone(),
+                _ => vec![],
+            },
             _ => vec![],
         }
     }
@@ -754,20 +773,16 @@ impl App {
         if let Some(idx) = self.list_edit_index {
             let category = self.settings_categories[self.active_settings_category];
             match category {
-                SettingsCategory::Git => {
-                    match idx {
-                        0 => return self.config.init_git.list_input.clone(),
-                        1 => return self.config.create_local_gitignore.list_input.clone(),
-                        _ => {}
-                    }
-                }
-                SettingsCategory::Actions => {
-                    match idx {
-                        0 => return self.config.open_terminal.list_input.clone(),
-                        1 => return self.config.open_ide.list_input.clone(),
-                        _ => {}
-                    }
-                }
+                SettingsCategory::Git => match idx {
+                    0 => return self.config.init_git.list_input.clone(),
+                    1 => return self.config.create_local_gitignore.list_input.clone(),
+                    _ => {}
+                },
+                SettingsCategory::Actions => match idx {
+                    0 => return self.config.open_terminal.list_input.clone(),
+                    1 => return self.config.open_ide.list_input.clone(),
+                    _ => {}
+                },
                 _ => {}
             }
         }
