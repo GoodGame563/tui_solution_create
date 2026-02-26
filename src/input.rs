@@ -93,7 +93,7 @@ fn handle_input_state(app: &mut App, key: KeyCode, modifiers: KeyModifiers) {
                 app.previous_main_tab();
             }
         }
-        KeyCode::Char('q') => {
+        KeyCode::Char('q') | KeyCode::Char('Q') => {
             if app.settings_edit_index.is_none() && app.list_edit_index.is_none() && !app.input_active {
                 std::process::exit(0);
             }
@@ -107,7 +107,7 @@ fn handle_input_state(app: &mut App, key: KeyCode, modifiers: KeyModifiers) {
                 }
             }
         }
-        KeyCode::Char('c') => {
+        KeyCode::Char('c') | KeyCode::Char('C') => {
             if app.settings_edit_index.is_some() || app.list_edit_index.is_some() || app.input_active {
                 if app.input_active && app.active_main_tab == 0 {
                     app.insert_char('c');
@@ -234,12 +234,23 @@ fn handle_input_state(app: &mut App, key: KeyCode, modifiers: KeyModifiers) {
                 app.scroll_projects(1);
             }
         }
-        KeyCode::Char('ё') | KeyCode::Char('`') => {
+        KeyCode::Char('ё') | KeyCode::Char('`') | KeyCode::Char('Ё') | KeyCode::Char('~') => {
             if app.active_main_tab == 0 && !app.input_active {
                 app.open_language_popup();
             }
         }
         KeyCode::Char('v') if modifiers.contains(KeyModifiers::CONTROL) => {
+            if app.input_active && app.active_main_tab == 0 {
+                app.paste_from_clipboard();
+            } else if app.active_main_tab == 1 {
+                if app.settings_edit_index.is_some() {
+                    app.paste_setting_from_clipboard();
+                } else if app.list_edit_index.is_some() {
+                    app.paste_list_from_clipboard();
+                }
+            }
+        }
+        KeyCode::Char('V') if modifiers.contains(KeyModifiers::CONTROL) => {
             if app.input_active && app.active_main_tab == 0 {
                 app.paste_from_clipboard();
             } else if app.active_main_tab == 1 {
