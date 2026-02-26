@@ -20,12 +20,6 @@ use ratatui::{
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum FocusSection {
-    UrlInput,
-    Language,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
 enum SettingsCategory {
     General,
     Git,
@@ -51,7 +45,7 @@ struct App {
     active_main_tab: usize,
     url_input: String,
     cursor_position: usize,
-    input_mode: bool,
+    input_active: bool,
     languages: Vec<String>,
     selected_language_index: usize,
     projects: Vec<(String, String)>,
@@ -66,11 +60,17 @@ struct App {
     list_input_cursor: usize,
     state: AppState,
     creation_stages: Vec<&'static str>,
-    focus_section: FocusSection,
     language_popup_open: bool,
+    language_popup_in_modal: bool,
     language_search: String,
     language_search_cursor: usize,
+    language_filtered_index: usize,
     status_message: Option<(String, Duration)>,
+    template_popup_open: bool,
+    template_popup_templates: Vec<String>,
+    template_popup_selected: Vec<bool>,
+    template_popup_scroll: usize,
+    template_popup_source: Option<(SettingsCategory, usize)>,
 }
 
 enum AppState {
@@ -87,7 +87,7 @@ impl App {
             active_main_tab: 0,
             url_input: String::new(),
             cursor_position: 0,
-            input_mode: false,
+            input_active: false,
             languages: languages.clone(),
             selected_language_index: 0,
             projects: vec![
@@ -117,11 +117,17 @@ impl App {
                 "Building solution...",
                 "Finalizing...",
             ],
-            focus_section: FocusSection::UrlInput,
             language_popup_open: false,
+            language_popup_in_modal: false,
             language_search: String::new(),
             language_search_cursor: 0,
+            language_filtered_index: 0,
             status_message: None,
+            template_popup_open: false,
+            template_popup_templates: Vec::new(),
+            template_popup_selected: Vec::new(),
+            template_popup_scroll: 0,
+            template_popup_source: None,
         }
     }
 
@@ -158,18 +164,111 @@ impl App {
 
     fn open_language_popup(&mut self) {
         self.language_popup_open = true;
+        self.language_popup_in_modal = false;
         self.language_search.clear();
         self.language_search_cursor = 0;
+        self.language_filtered_index = 0;
     }
 
     fn close_language_popup(&mut self) {
         self.language_popup_open = false;
+        self.language_popup_in_modal = false;
+        self.language_search.clear();
+        self.language_search_cursor = 0;
+        self.language_filtered_index = 0;
     }
 
     fn confirm_language_selection(&mut self) {
+        let filtered = self.get_filtered_languages();
+        if let Some((orig_idx, _)) = filtered.get(self.language_filtered_index) {
+            self.selected_language_index = *orig_idx;
+        }
         self.language_popup_open = false;
+        self.language_popup_in_modal = false;
         self.language_search.clear();
         self.language_search_cursor = 0;
+        self.language_filtered_index = 0;
+    }
+
+    fn open_template_popup(&mut self) {
+        let category = self.settings_categories[self.active_settings_category];
+        let idx = self.settings_cursor;
+
+        let mut recipes = Vec::new();
+        if let Ok(entries) = fs::read_dir("recipes") {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|s| s.to_str()) == Some("yaml") {
+                    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                        recipes.push(stem.to_string());
+                    }
+                }
+            }
+        }
+        recipes.sort();
+
+        let current_selected = if let Some(toggle) = self.get_toggle_for_setting(category, idx) {
+            toggle.list.clone()
+        } else {
+            Vec::new()
+        };
+
+        self.template_popup_templates = recipes;
+        self.template_popup_selected = self.template_popup_templates.iter()
+            .map(|r| current_selected.contains(r))
+            .collect();
+        self.template_popup_scroll = 0;
+        self.template_popup_source = Some((category, idx));
+        self.template_popup_open = true;
+    }
+
+    fn close_template_popup(&mut self) {
+        self.template_popup_open = false;
+        self.template_popup_templates.clear();
+        self.template_popup_selected.clear();
+        self.template_popup_source = None;
+    }
+
+    fn save_template_popup(&mut self) {
+        let selected: Vec<String> = self.template_popup_templates.iter()
+            .enumerate()
+            .filter(|(i, _)| self.template_popup_selected.get(*i).copied().unwrap_or(false))
+            .map(|(_, r)| r.clone())
+            .collect();
+        let any_selected = !selected.is_empty();
+
+        if let Some((category, idx)) = self.template_popup_source {
+            if let Some(toggle) = self.get_toggle_for_setting(category, idx) {
+                toggle.list = selected;
+                toggle.mode = if any_selected {
+                    ToggleMode::YesSome
+                } else {
+                    ToggleMode::No
+                };
+            }
+        }
+        self.close_template_popup();
+    }
+
+    fn toggle_template_popup_selection(&mut self) {
+        if !self.template_popup_selected.is_empty() {
+            let idx = self.template_popup_scroll;
+            if idx < self.template_popup_selected.len() {
+                self.template_popup_selected[idx] = !self.template_popup_selected[idx];
+            }
+        }
+    }
+
+    fn move_template_popup_selection(&mut self, direction: i8) {
+        if direction > 0 {
+            if self.template_popup_scroll < self.template_popup_templates.len().saturating_sub(1) {
+                self.template_popup_scroll += 1;
+            }
+        } else {
+            if self.template_popup_scroll > 0 {
+                self.template_popup_scroll -= 1;
+            }
+        }
     }
 
     fn get_filtered_languages(&self) -> Vec<(usize, String)> {
@@ -188,26 +287,36 @@ impl App {
     }
 
     fn move_language_selection(&mut self, direction: i8) {
+        let filtered = self.get_filtered_languages();
+        if filtered.is_empty() {
+            return;
+        }
         if direction > 0 {
-            self.selected_language_index = (self.selected_language_index + 1) % self.languages.len();
+            self.language_filtered_index = (self.language_filtered_index + 1) % filtered.len();
         } else {
-            self.selected_language_index = if self.selected_language_index == 0 {
-                self.languages.len() - 1
+            self.language_filtered_index = if self.language_filtered_index == 0 {
+                filtered.len() - 1
             } else {
-                self.selected_language_index - 1
+                self.language_filtered_index - 1
             };
         }
     }
 
     fn insert_language_search_char(&mut self, c: char) {
-        self.language_search.insert(self.language_search_cursor, c);
+        let mut chars: Vec<char> = self.language_search.chars().collect();
+        chars.insert(self.language_search_cursor, c);
+        self.language_search = chars.into_iter().collect();
         self.language_search_cursor += 1;
     }
 
     fn delete_language_search_char(&mut self) {
         if self.language_search_cursor > 0 {
-            self.language_search.remove(self.language_search_cursor - 1);
             self.language_search_cursor -= 1;
+            let mut chars: Vec<char> = self.language_search.chars().collect();
+            if self.language_search_cursor < chars.len() {
+                chars.remove(self.language_search_cursor);
+                self.language_search = chars.into_iter().collect();
+            }
         }
     }
 
@@ -239,23 +348,21 @@ impl App {
         self.list_edit_index = None;
     }
 
-    fn enter_input_mode(&mut self) {
-        self.input_mode = true;
-    }
-
-    fn leave_input_mode(&mut self) {
-        self.input_mode = false;
-    }
-
     fn delete_char(&mut self) {
         if self.cursor_position > 0 {
-            self.url_input.remove(self.cursor_position - 1);
             self.cursor_position -= 1;
+            let mut chars: Vec<char> = self.url_input.chars().collect();
+            if self.cursor_position < chars.len() {
+                chars.remove(self.cursor_position);
+                self.url_input = chars.into_iter().collect();
+            }
         }
     }
 
     fn insert_char(&mut self, c: char) {
-        self.url_input.insert(self.cursor_position, c);
+        let mut chars: Vec<char> = self.url_input.chars().collect();
+        chars.insert(self.cursor_position, c);
+        self.url_input = chars.into_iter().collect();
         self.cursor_position += 1;
     }
 
@@ -266,7 +373,8 @@ impl App {
     }
 
     fn move_cursor_right(&mut self) {
-        if self.cursor_position < self.url_input.len() {
+        let len = self.url_input.chars().count();
+        if self.cursor_position < len {
             self.cursor_position += 1;
         }
     }
@@ -275,7 +383,9 @@ impl App {
         if let Ok(mut clipboard) = arboard::Clipboard::new() {
             if let Ok(text) = clipboard.get_text() {
                 for c in text.chars() {
-                    self.url_input.insert(self.cursor_position, c);
+                    let mut chars: Vec<char> = self.url_input.chars().collect();
+                    chars.insert(self.cursor_position, c);
+                    self.url_input = chars.into_iter().collect();
                     self.cursor_position += 1;
                 }
             }
@@ -372,40 +482,16 @@ impl App {
                 }
             }
             SettingsCategory::Git | SettingsCategory::Actions => {
-                let needs_list_input = if let Some(toggle) = self.get_toggle_for_setting(category, settings_cursor) {
+                if let Some(toggle) = self.get_toggle_for_setting(category, settings_cursor) {
                     toggle.mode = match toggle.mode {
                         ToggleMode::No => ToggleMode::Yes,
-                        ToggleMode::Yes => ToggleMode::YesSome,
+                        ToggleMode::Yes => ToggleMode::No,
                         ToggleMode::YesSome => ToggleMode::No,
                     };
-                    toggle.mode == ToggleMode::YesSome
-                } else {
-                    false
-                };
-
-                if needs_list_input {
-                    self.list_edit_index = Some(settings_cursor);
-                    self.list_input_cursor = 0;
-                    if let Some(toggle) = self.get_toggle_for_setting(category, settings_cursor) {
-                        toggle.list_input_active = true;
-                        toggle.list_input.clear();
-                    }
-                } else {
-                    if let Some(toggle) = self.get_toggle_for_setting(category, settings_cursor) {
-                        toggle.list_input_active = false;
-                    }
-                    self.list_edit_index = None;
+                    toggle.list_input_active = false;
                 }
+                self.list_edit_index = None;
             }
-        }
-    }
-
-    fn submit_url(&mut self) {
-        if !self.url_input.is_empty() {
-            self.state = AppState::Creating { progress: 0.0, stage: 0 };
-            self.input_mode = false;
-        } else {
-            self.set_status("Enter project name", Color::Yellow);
         }
     }
 
@@ -470,7 +556,9 @@ impl App {
     fn insert_setting_char(&mut self, c: char) {
         let cursor = self.settings_edit_cursor;
         if let Some(field) = self.get_editable_field_mut() {
-            field.insert(cursor, c);
+            let mut chars: Vec<char> = field.chars().collect();
+            chars.insert(cursor, c);
+            *field = chars.into_iter().collect();
             self.settings_edit_cursor += 1;
         }
     }
@@ -479,7 +567,11 @@ impl App {
         if self.settings_edit_cursor > 0 {
             let cursor = self.settings_edit_cursor - 1;
             if let Some(field) = self.get_editable_field_mut() {
-                field.remove(cursor);
+                let mut chars: Vec<char> = field.chars().collect();
+                if cursor < chars.len() {
+                    chars.remove(cursor);
+                    *field = chars.into_iter().collect();
+                }
                 self.settings_edit_cursor -= 1;
             }
         }
@@ -493,7 +585,8 @@ impl App {
 
     fn move_setting_cursor_right(&mut self) {
         if let Some(field) = self.get_editable_field() {
-            if self.settings_edit_cursor < field.len() {
+            let len = field.chars().count();
+            if self.settings_edit_cursor < len {
                 self.settings_edit_cursor += 1;
             }
         }
@@ -504,7 +597,9 @@ impl App {
             let cursor = self.list_input_cursor;
             let category = self.settings_categories[self.active_settings_category];
             if let Some(toggle) = self.get_toggle_for_setting(category, idx) {
-                toggle.list_input.insert(cursor, c);
+                let mut chars: Vec<char> = toggle.list_input.chars().collect();
+                chars.insert(cursor, c);
+                toggle.list_input = chars.into_iter().collect();
             }
             self.list_input_cursor += 1;
         }
@@ -516,7 +611,11 @@ impl App {
                 let cursor = self.list_input_cursor - 1;
                 let category = self.settings_categories[self.active_settings_category];
                 if let Some(toggle) = self.get_toggle_for_setting(category, idx) {
-                    toggle.list_input.remove(cursor);
+                    let mut chars: Vec<char> = toggle.list_input.chars().collect();
+                    if cursor < chars.len() {
+                        chars.remove(cursor);
+                        toggle.list_input = chars.into_iter().collect();
+                    }
                 }
                 self.list_input_cursor -= 1;
             }
@@ -534,7 +633,8 @@ impl App {
         if let Some(idx) = self.list_edit_index {
             let category = self.settings_categories[self.active_settings_category];
             if let Some(toggle) = self.get_toggle_for_setting(category, idx) {
-                if cursor < toggle.list_input.len() {
+                let len = toggle.list_input.chars().count();
+                if cursor < len {
                     self.list_input_cursor += 1;
                 }
             }
@@ -702,151 +802,237 @@ fn run_app<B: ratatui::backend::Backend>(
                 if key.kind == KeyEventKind::Press {
                     match app.state {
                         AppState::Input => {
-                            match key.code {
-                                KeyCode::Char('q') => return Ok(()),
-                                KeyCode::Tab => {
-                                    if !app.input_mode && app.active_main_tab == 0 {
-                                        app.next_main_tab();
-                                    } else if app.active_main_tab == 1 {
-                                        app.previous_main_tab();
+                            if app.language_popup_open {
+                                match key.code {
+                                    KeyCode::Esc => {
+                                        app.close_language_popup();
                                     }
-                                }
-                                KeyCode::BackTab => {
-                                    if app.active_main_tab == 1 {
-                                        app.previous_main_tab();
-                                    }
-                                }
-                                KeyCode::Left => {
-                                    if app.language_popup_open {
-                                        app.move_language_selection(-1);
-                                    } else if app.input_mode && app.active_main_tab == 0 {
-                                        app.move_cursor_left();
-                                    } else if app.active_main_tab == 1 {
-                                        if app.settings_edit_index.is_some() {
-                                            app.move_setting_cursor_left();
-                                        } else if app.list_edit_index.is_some() {
-                                            app.move_list_cursor_left();
-                                        } else {
-                                            app.previous_settings_category();
-                                        }
-                                    }
-                                }
-                                KeyCode::Right => {
-                                    if app.language_popup_open {
-                                        app.move_language_selection(1);
-                                    } else if app.input_mode && app.active_main_tab == 0 {
-                                        app.move_cursor_right();
-                                    } else if app.active_main_tab == 1 {
-                                        if app.settings_edit_index.is_some() {
-                                            app.move_setting_cursor_right();
-                                        } else if app.list_edit_index.is_some() {
-                                            app.move_list_cursor_right();
-                                        } else {
-                                            app.next_settings_category();
-                                        }
-                                    }
-                                }
-                                KeyCode::Up => {
-                                    if app.language_popup_open {
-                                        app.move_language_selection(-1);
-                                    } else if app.active_main_tab == 1 {
-                                        if app.settings_edit_index.is_none() && app.list_edit_index.is_none() {
-                                            app.move_settings_cursor(-1);
-                                        }
-                                    } else if app.active_main_tab == 0 {
-                                        app.scroll_projects(-1);
-                                    }
-                                }
-                                KeyCode::Down => {
-                                    if app.language_popup_open {
-                                        app.move_language_selection(1);
-                                    } else if app.active_main_tab == 1 {
-                                        if app.settings_edit_index.is_none() && app.list_edit_index.is_none() {
-                                            app.move_settings_cursor(1);
-                                        }
-                                    } else if app.active_main_tab == 0 {
-                                        app.scroll_projects(1);
-                                    }
-                                }
-                                KeyCode::Enter => {
-                                    if app.language_popup_open {
+                                    KeyCode::Enter => {
                                         app.confirm_language_selection();
-                                    } else if !app.input_mode && app.active_main_tab == 0 {
-                                        app.enter_input_mode();
-                                    } else if app.input_mode && app.active_main_tab == 0 {
-                                        app.submit_url();
-                                    } else if app.active_main_tab == 1 {
-                                        if app.settings_edit_index.is_some() {
-                                            app.stop_editing_setting();
-                                        } else if app.list_edit_index.is_some() {
-                                            app.save_list_input();
+                                    }
+                                    KeyCode::Up => {
+                                        app.move_language_selection(-1);
+                                    }
+                                    KeyCode::Down => {
+                                        app.move_language_selection(1);
+                                    }
+                                    KeyCode::Backspace => {
+                                        app.delete_language_search_char();
+                                    }
+                                    KeyCode::Char(c) => {
+                                        app.insert_language_search_char(c);
+                                    }
+                                    _ => {}
+                                }
+                            } else if app.template_popup_open {
+                                match key.code {
+                                    KeyCode::Esc => {
+                                        app.close_template_popup();
+                                    }
+                                    KeyCode::Enter => {
+                                        app.save_template_popup();
+                                    }
+                                    KeyCode::Char(' ') => {
+                                        app.toggle_template_popup_selection();
+                                    }
+                                    KeyCode::Up => {
+                                        app.move_template_popup_selection(-1);
+                                    }
+                                    KeyCode::Down => {
+                                        app.move_template_popup_selection(1);
+                                    }
+                                    _ => {}
+                                }
+                            } else {
+                                match key.code {
+                                    KeyCode::Tab => {
+                                        if app.settings_edit_index.is_some() || app.list_edit_index.is_some() {
+                                        } else if app.active_main_tab == 0 {
+                                            app.next_main_tab();
                                         } else {
-                                            let category = app.settings_categories[app.active_settings_category];
-                                            if category == SettingsCategory::General {
-                                                app.start_editing_setting();
-                                            } else {
-                                                app.toggle_setting();
+                                            app.previous_main_tab();
+                                        }
+                                    }
+                                    KeyCode::BackTab => {
+                                        if app.settings_edit_index.is_some() || app.list_edit_index.is_some() {
+                                        } else if app.active_main_tab == 1 {
+                                            app.previous_main_tab();
+                                        }
+                                    }
+                                    KeyCode::Char('q') => {
+                                        if app.settings_edit_index.is_none() && app.list_edit_index.is_none() && !app.input_active {
+                                            return Ok(());
+                                        }
+                                        if app.input_active && app.active_main_tab == 0 {
+                                            app.insert_char('q');
+                                        } else if app.active_main_tab == 1 {
+                                            if app.settings_edit_index.is_some() {
+                                                app.insert_setting_char('q');
+                                            } else if app.list_edit_index.is_some() {
+                                                app.insert_list_char('q');
                                             }
                                         }
                                     }
-                                }
-                                KeyCode::Esc => {
-                                    if app.language_popup_open {
-                                        app.close_language_popup();
-                                    } else if app.input_mode {
-                                        app.leave_input_mode();
-                                    } else if app.active_main_tab == 1 {
-                                        if app.settings_edit_index.is_some() {
-                                            app.stop_editing_setting();
-                                        } else if app.list_edit_index.is_some() {
-                                            app.cancel_list_input();
+                                    KeyCode::Char('c') => {
+                                        if app.settings_edit_index.is_some() || app.list_edit_index.is_some() || app.input_active {
+                                            if app.input_active && app.active_main_tab == 0 {
+                                                app.insert_char('c');
+                                            } else if app.active_main_tab == 1 {
+                                                if app.settings_edit_index.is_some() {
+                                                    app.insert_setting_char('c');
+                                                } else if app.list_edit_index.is_some() {
+                                                    app.insert_list_char('c');
+                                                }
+                                            }
+                                        } else if app.active_main_tab == 1 {
+                                            let category = app.settings_categories[app.active_settings_category];
+                                            if category == SettingsCategory::Git || category == SettingsCategory::Actions {
+                                                app.open_template_popup();
+                                            }
                                         }
                                     }
-                                }
-                                KeyCode::Backspace => {
-                                    if app.language_popup_open {
-                                        app.delete_language_search_char();
-                                    } else if app.input_mode && app.active_main_tab == 0 {
-                                        app.delete_char();
-                                    } else if app.active_main_tab == 1 {
-                                        if app.settings_edit_index.is_some() {
-                                            app.delete_setting_char();
-                                        } else if app.list_edit_index.is_some() {
-                                            app.delete_list_char();
+                                    KeyCode::Enter => {
+                                        if app.active_main_tab == 0 {
+                                            if !app.url_input.is_empty() {
+                                                app.state = AppState::Creating { progress: 0.0, stage: 0 };
+                                                app.input_active = false;
+                                            } else {
+                                                app.input_active = !app.input_active;
+                                            }
+                                        } else if app.active_main_tab == 1 {
+                                            if app.settings_edit_index.is_some() {
+                                                app.stop_editing_setting();
+                                            } else if app.list_edit_index.is_some() {
+                                                app.save_list_input();
+                                            } else {
+                                                let category = app.settings_categories[app.active_settings_category];
+                                                if category == SettingsCategory::General {
+                                                    app.start_editing_setting();
+                                                } else {
+                                                    app.toggle_setting();
+                                                }
+                                            }
                                         }
                                     }
-                                }
-                                KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                                    if app.input_mode && app.active_main_tab == 0 {
-                                        app.paste_from_clipboard();
-                                    }
-                                }
-                                KeyCode::Char('ё') | KeyCode::Char('`') => {
-                                    if app.active_main_tab == 0 && !app.input_mode {
-                                        app.open_language_popup();
-                                    } else if app.input_mode && app.active_main_tab == 0 {
-                                        app.cycle_language();
-                                    }
-                                }
-                                KeyCode::Char(' ') => {
-                                    if app.active_main_tab == 1 && app.settings_edit_index.is_none() && app.list_edit_index.is_none() {
-                                        app.toggle_setting();
-                                    }
-                                }
-                                KeyCode::Char(c) => {
-                                    if app.language_popup_open {
-                                        app.insert_language_search_char(c);
-                                    } else if app.input_mode && app.active_main_tab == 0 {
-                                        app.insert_char(c);
-                                    } else if app.active_main_tab == 1 {
-                                        if app.settings_edit_index.is_some() {
-                                            app.insert_setting_char(c);
-                                        } else if app.list_edit_index.is_some() {
-                                            app.insert_list_char(c);
+                                    KeyCode::Esc => {
+                                        if app.template_popup_open {
+                                            app.close_template_popup();
+                                        } else if app.language_popup_open {
+                                            app.close_language_popup();
+                                        } else if app.input_active {
+                                            app.input_active = false;
+                                        } else if app.active_main_tab == 1 {
+                                            if app.settings_edit_index.is_some() {
+                                                app.stop_editing_setting();
+                                            } else if app.list_edit_index.is_some() {
+                                                app.cancel_list_input();
+                                            }
                                         }
                                     }
+                                    KeyCode::Backspace => {
+                                        if app.input_active && app.active_main_tab == 0 {
+                                            app.delete_char();
+                                        } else if app.active_main_tab == 1 {
+                                            if app.settings_edit_index.is_some() {
+                                                app.delete_setting_char();
+                                            } else if app.list_edit_index.is_some() {
+                                                app.delete_list_char();
+                                            }
+                                        }
+                                    }
+                                    KeyCode::Left => {
+                                        if app.input_active && app.active_main_tab == 0 {
+                                            app.move_cursor_left();
+                                        } else if app.active_main_tab == 1 {
+                                            if app.settings_edit_index.is_some() {
+                                                app.move_setting_cursor_left();
+                                            } else if app.list_edit_index.is_some() {
+                                                app.move_list_cursor_left();
+                                            } else {
+                                                app.previous_settings_category();
+                                            }
+                                        }
+                                    }
+                                    KeyCode::Right => {
+                                        if app.input_active && app.active_main_tab == 0 {
+                                            app.move_cursor_right();
+                                        } else if app.active_main_tab == 1 {
+                                            if app.settings_edit_index.is_some() {
+                                                app.move_setting_cursor_right();
+                                            } else if app.list_edit_index.is_some() {
+                                                app.move_list_cursor_right();
+                                            } else {
+                                                app.next_settings_category();
+                                            }
+                                        }
+                                    }
+                                    KeyCode::Up => {
+                                        if app.template_popup_open {
+                                            app.move_template_popup_selection(-1);
+                                        } else if app.language_popup_open && !app.language_popup_in_modal {
+                                            app.move_language_selection(-1);
+                                        } else if app.input_active && app.active_main_tab == 0 {
+                                        } else if app.active_main_tab == 1 {
+                                            if app.settings_edit_index.is_some() {
+                                                app.stop_editing_setting();
+                                                app.move_settings_cursor(-1);
+                                            } else if app.list_edit_index.is_none() {
+                                                app.move_settings_cursor(-1);
+                                            }
+                                        } else if app.active_main_tab == 0 {
+                                            app.scroll_projects(-1);
+                                        }
+                                    }
+                                    KeyCode::Down => {
+                                        if app.template_popup_open {
+                                            app.move_template_popup_selection(1);
+                                        } else if app.language_popup_open && !app.language_popup_in_modal {
+                                            app.move_language_selection(1);
+                                        } else if app.input_active && app.active_main_tab == 0 {
+                                        } else if app.active_main_tab == 1 {
+                                            if app.settings_edit_index.is_some() {
+                                                app.stop_editing_setting();
+                                                app.move_settings_cursor(1);
+                                            } else if app.list_edit_index.is_none() {
+                                                app.move_settings_cursor(1);
+                                            }
+                                        } else if app.active_main_tab == 0 {
+                                            app.scroll_projects(1);
+                                        }
+                                    }
+                                    KeyCode::Char('ё') | KeyCode::Char('`') => {
+                                        if app.active_main_tab == 0 && !app.input_active {
+                                            app.open_language_popup();
+                                        }
+                                    }
+                                    KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                        if app.input_active && app.active_main_tab == 0 {
+                                            app.paste_from_clipboard();
+                                        }
+                                    }
+                                    KeyCode::Char(' ') => {
+                                        if app.template_popup_open {
+                                            app.toggle_template_popup_selection();
+                                        } else if app.active_main_tab == 1 && app.settings_edit_index.is_none() && app.list_edit_index.is_none() {
+                                            app.toggle_setting();
+                                        }
+                                    }
+                                    KeyCode::Char(c) => {
+                                        if app.template_popup_open {
+                                        } else if app.language_popup_open && !app.language_popup_in_modal {
+                                            app.insert_language_search_char(c);
+                                        } else if app.input_active && app.active_main_tab == 0 {
+                                            app.insert_char(c);
+                                        } else if app.active_main_tab == 1 {
+                                            if app.settings_edit_index.is_some() {
+                                                app.insert_setting_char(c);
+                                            } else if app.list_edit_index.is_some() {
+                                                app.insert_list_char(c);
+                                            }
+                                        }
+                                    }
+                                    _ => {}
                                 }
-                                _ => {}
                             }
                         }
                         AppState::Creating { .. } => {
@@ -901,6 +1087,9 @@ fn ui(f: &mut Frame, app: &App) {
 
     if app.language_popup_open {
         render_language_popup(f, app);
+    }
+    if app.template_popup_open {
+        render_template_popup(f, app);
     }
 }
 
@@ -958,40 +1147,83 @@ fn render_status_bar(f: &mut Frame, app: &App, area: Rect) {
             Span::raw(msg.clone()),
         ])
     } else if app.active_main_tab == 0 {
-        Line::from(vec![
-            Span::styled("Ctrl+V", Style::default().fg(Color::Cyan)),
-            Span::raw(" Paste  "),
-            Span::styled("ё", Style::default().fg(Color::Cyan)),
-            Span::raw(" Language  "),
-            Span::styled("↑/↓", Style::default().fg(Color::Cyan)),
-            Span::raw(" Scroll  "),
-            Span::styled("Enter", Style::default().fg(Color::Green)),
-            Span::raw(" Create  "),
-            Span::styled("Tab", Style::default().fg(Color::Magenta)),
-            Span::raw(" Settings  "),
-            Span::styled("q", Style::default().fg(Color::Red)),
-            Span::raw(" Quit"),
-        ])
-    } else {
-        let help_text = if app.list_edit_index.is_some() {
-            "Enter Save  Esc Cancel"
-        } else if app.settings_edit_index.is_some() {
-            "Enter Save  Esc Cancel"
+        if app.input_active {
+            Line::from(vec![
+                Span::styled("Enter", Style::default().fg(Color::Green)),
+                Span::raw(" Create  "),
+                Span::styled("Esc", Style::default().fg(Color::Red)),
+                Span::raw(" Cancel  "),
+                Span::styled("Ctrl+V", Style::default().fg(Color::Cyan)),
+                Span::raw(" Paste"),
+            ])
         } else {
-            "Enter/Space Toggle"
-        };
-        Line::from(vec![
-            Span::styled(help_text, Style::default().fg(Color::Green)),
-            Span::raw("  "),
-            Span::styled("↑/↓", Style::default().fg(Color::Cyan)),
-            Span::raw(" Navigate  "),
-            Span::styled("←/→", Style::default().fg(Color::Magenta)),
-            Span::raw(" Categories  "),
-            Span::styled("Tab", Style::default().fg(Color::Magenta)),
-            Span::raw(" Recipes  "),
-            Span::styled("q", Style::default().fg(Color::Red)),
-            Span::raw(" Quit"),
-        ])
+            Line::from(vec![
+                Span::styled("Enter", Style::default().fg(Color::Green)),
+                Span::raw(" Edit URL  "),
+                Span::styled("ё", Style::default().fg(Color::Cyan)),
+                Span::raw(" Language  "),
+                Span::styled("↑/↓", Style::default().fg(Color::Cyan)),
+                Span::raw(" Scroll  "),
+                Span::styled("Tab", Style::default().fg(Color::Magenta)),
+                Span::raw(" Settings  "),
+                Span::styled("q", Style::default().fg(Color::Red)),
+                Span::raw(" Quit"),
+            ])
+        }
+    } else {
+        if app.settings_edit_index.is_some() {
+            let category = app.settings_categories[app.active_settings_category];
+            if category == SettingsCategory::General {
+                Line::from(vec![
+                    Span::styled("Enter", Style::default().fg(Color::Green)),
+                    Span::raw(" Save  "),
+                    Span::styled("Esc", Style::default().fg(Color::Red)),
+                    Span::raw(" Cancel  "),
+                    Span::styled("↑/↓", Style::default().fg(Color::Cyan)),
+                    Span::raw(" Switch  "),
+                    Span::styled("←/→", Style::default().fg(Color::Magenta)),
+                    Span::raw(" Edit"),
+                ])
+            } else {
+                Line::from(vec![
+                    Span::styled("Enter", Style::default().fg(Color::Green)),
+                    Span::raw(" Save  "),
+                    Span::styled("Esc", Style::default().fg(Color::Red)),
+                    Span::raw(" Cancel"),
+                ])
+            }
+        } else if app.template_popup_open {
+            Line::from(vec![
+                Span::styled("Space", Style::default().fg(Color::Green)),
+                Span::raw(" Toggle  "),
+                Span::styled("Enter", Style::default().fg(Color::Green)),
+                Span::raw(" Save  "),
+                Span::styled("Esc", Style::default().fg(Color::Red)),
+                Span::raw(" Cancel"),
+            ])
+        } else if app.list_edit_index.is_some() {
+            Line::from(vec![
+                Span::styled("Enter", Style::default().fg(Color::Green)),
+                Span::raw(" Save  "),
+                Span::styled("Esc", Style::default().fg(Color::Red)),
+                Span::raw(" Cancel"),
+            ])
+        } else {
+            Line::from(vec![
+                Span::styled("Enter/Space", Style::default().fg(Color::Green)),
+                Span::raw(" Toggle  "),
+                Span::styled("c", Style::default().fg(Color::Cyan)),
+                Span::raw(" Templates  "),
+                Span::styled("↑/↓", Style::default().fg(Color::Cyan)),
+                Span::raw(" Navigate  "),
+                Span::styled("←/→", Style::default().fg(Color::Magenta)),
+                Span::raw(" Categories  "),
+                Span::styled("Tab", Style::default().fg(Color::Magenta)),
+                Span::raw(" Recipes  "),
+                Span::styled("q", Style::default().fg(Color::Red)),
+                Span::raw(" Quit"),
+            ])
+        }
     };
 
     let status = Paragraph::new(status_text)
@@ -1016,57 +1248,52 @@ fn render_recipes_tab(f: &mut Frame, app: &App, area: Rect) {
                 .margin(1)
                 .constraints([
                     Constraint::Length(3),
-                    Constraint::Length(3),
                     Constraint::Min(5),
                 ])
                 .split(area);
 
-            let input_style = if app.input_mode && app.focus_section == FocusSection::UrlInput {
-                Style::default().fg(Color::Yellow)
+            let selected_lang = app.selected_language();
+            let lang_color = get_language_color(&selected_lang);
+
+            let input_display = if app.input_active {
+                let cursor_char = if (std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() / 500) % 2 == 0 {
+                    "█"
+                } else {
+                    " "
+                };
+                let before: String = app.url_input.chars().take(app.cursor_position).collect();
+                let after: String = app.url_input.chars().skip(app.cursor_position).collect();
+                format!("{}{}{}", before, cursor_char, after)
+            } else if app.url_input.is_empty() {
+                "Press Enter to enter LeetCode URL".to_string()
             } else {
-                Style::default().fg(Color::White)
+                app.url_input.clone()
             };
 
-            let input_widget = Paragraph::new(app.url_input.as_str())
-                .style(input_style)
+            let border_style = if app.input_active {
+                Style::default().fg(Color::Yellow)
+            } else {
+                Style::default().fg(Color::DarkGray)
+            };
+
+            let title_style = if app.input_active {
+                Style::default().fg(lang_color).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::DarkGray)
+            };
+
+            let input_widget = Paragraph::new(input_display.as_str())
+                .style(Style::default().fg(Color::White))
                 .block(
                     Block::default()
                         .borders(Borders::ALL)
-                        .title(" Project Name ")
-                        .border_style(Style::default().fg(if app.input_mode { Color::Yellow } else { Color::DarkGray }))
+                        .title(format!(" LeetCode URL | Language: {} ", selected_lang))
+                        .title_style(title_style)
+                        .border_style(border_style)
                         .padding(Padding::horizontal(1)),
                 );
 
             f.render_widget(input_widget, left_chunks[0]);
-
-            if app.input_mode {
-                f.set_cursor_position((
-                    left_chunks[0].x + app.cursor_position as u16 + 1,
-                    left_chunks[0].y + 1,
-                ));
-            }
-
-            let selected_lang = app.selected_language();
-            let lang_color = get_language_color(&selected_lang);
-
-            let lang_style = if app.focus_section == FocusSection::Language && !app.input_mode {
-                Style::default().fg(lang_color).bg(Color::DarkGray).add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(lang_color).add_modifier(Modifier::BOLD)
-            };
-
-            let lang_widget = Paragraph::new(selected_lang.as_str())
-                .style(lang_style)
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .title(" Language (ё to change) ")
-                        .border_style(Style::default().fg(Color::DarkGray))
-                        .padding(Padding::horizontal(1)),
-                )
-                .alignment(Alignment::Center);
-
-            f.render_widget(lang_widget, left_chunks[1]);
 
             let visible_projects = area.height.saturating_sub(6) as usize;
             let visible_projects = if visible_projects < 1 { 1 } else { visible_projects };
@@ -1107,7 +1334,7 @@ fn render_recipes_tab(f: &mut Frame, app: &App, area: Rect) {
                 )
                 .style(Style::default().fg(Color::White));
 
-            f.render_widget(projects_list, left_chunks[2]);
+            f.render_widget(projects_list, left_chunks[1]);
         }
         AppState::Creating { progress, stage } => {
             render_creation_screen(f, app, area, *progress, *stage);
@@ -1260,12 +1487,14 @@ fn render_settings_tab(f: &mut Frame, app: &App, area: Rect) {
                 format!(" {}{}{}", before, cursor_char, after)
             } else if *is_editing {
                 let cursor_char = if (std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() / 500) % 2 == 0 {
-                    "█"
+                    "▌"
                 } else {
                     " "
                 };
                 if let Some(val) = edit_value {
-                    format!(" {}{}{}", &val[..app.settings_edit_cursor.min(val.len())], cursor_char, &val[app.settings_edit_cursor.min(val.len())..])
+                    let before: String = val.chars().take(app.settings_edit_cursor).collect();
+                    let after: String = val.chars().skip(app.settings_edit_cursor).collect();
+                    format!(" {}{}{}", before, cursor_char, after)
                 } else {
                     String::new()
                 }
@@ -1383,7 +1612,12 @@ fn get_settings_for_category(app: &App) -> Vec<(&'static str, &'static str, bool
 }
 
 fn render_language_popup(f: &mut Frame, app: &App) {
-    let area = centered_rect(60, 50, f.area());
+    let in_modal = app.language_popup_in_modal;
+    let area = if in_modal {
+        centered_rect(60, 40, f.area())
+    } else {
+        centered_rect(60, 50, f.area())
+    };
 
     f.render_widget(Clear, area);
 
@@ -1391,9 +1625,10 @@ fn render_language_popup(f: &mut Frame, app: &App) {
 
     let items: Vec<ListItem> = filtered
         .iter()
-        .map(|(orig_idx, lang)| {
+        .enumerate()
+        .map(|(i, (_orig_idx, lang))| {
             let lang_color = get_language_color(lang);
-            let is_selected = *orig_idx == app.selected_language_index;
+            let is_selected = i == app.language_filtered_index;
 
             let style = if is_selected {
                 Style::default()
@@ -1421,6 +1656,12 @@ fn render_language_popup(f: &mut Frame, app: &App) {
         Style::default().fg(Color::White)
     };
 
+    let title = if in_modal {
+        " Select Language (Enter to confirm) "
+    } else {
+        " Select Language "
+    };
+
     let search_widget = Paragraph::new(search_text)
         .style(search_style)
         .block(
@@ -1436,7 +1677,7 @@ fn render_language_popup(f: &mut Frame, app: &App) {
             Block::default()
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(Color::Cyan))
-                .title(" Select Language ")
+                .title(title)
                 .padding(Padding::horizontal(1)),
         );
 
@@ -1450,6 +1691,54 @@ fn render_language_popup(f: &mut Frame, app: &App) {
 
     f.render_widget(search_widget, chunks[0]);
     f.render_widget(list, chunks[1]);
+}
+
+fn render_template_popup(f: &mut Frame, app: &App) {
+    let area = centered_rect(60, 50, f.area());
+
+    f.render_widget(Clear, area);
+
+    let items: Vec<ListItem> = app.template_popup_templates
+        .iter()
+        .enumerate()
+        .map(|(i, template)| {
+            let is_selected = i == app.template_popup_scroll;
+            let is_checked = app.template_popup_selected.get(i).copied().unwrap_or(false);
+
+            let checkbox = if is_checked {
+                Span::styled("[X]", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
+            } else {
+                Span::styled("[ ]", Style::default().fg(Color::DarkGray))
+            };
+
+            let style = if is_selected {
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Rgb(0, 150, 0))
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::White)
+            };
+
+            let marker = if is_selected { "> " } else { "  " };
+            ListItem::new(Line::from(vec![
+                checkbox,
+                Span::raw(" "),
+                Span::styled(format!("{}{}", marker, template), style),
+            ]))
+        })
+        .collect();
+
+    let list = List::new(items)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Cyan))
+                .title(" Select Recipes (Space to toggle, Enter to save) ")
+                .padding(Padding::horizontal(1)),
+        );
+
+    f.render_widget(list, area);
 }
 
 fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
