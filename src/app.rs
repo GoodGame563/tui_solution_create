@@ -1,7 +1,8 @@
 use crate::structs::{AppConfig, ToggleMode, ToggleWithList};
 use crate::utils::get_all_config;
 use ratatui::prelude::Color;
-use std::{fs, time::Duration};
+use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum SettingsCategory {
@@ -28,6 +29,41 @@ impl SettingsCategory {
     }
 }
 
+/// Все настройки приложения в одной структуре для удобного доступа
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct AllSettings {
+    pub recipes_url: String,
+    pub solutions_url: String,
+    pub init_git: ToggleWithList,
+    pub create_local_gitignore: ToggleWithList,
+    pub open_terminal: ToggleWithList,
+    pub open_ide: ToggleWithList,
+}
+
+impl AllSettings {
+    pub fn from_config(config: &AppConfig) -> Self {
+        Self {
+            recipes_url: config.recipes_url.clone(),
+            solutions_url: config.solutions_url.clone(),
+            init_git: config.init_git.clone(),
+            create_local_gitignore: config.create_local_gitignore.clone(),
+            open_terminal: config.open_terminal.clone(),
+            open_ide: config.open_ide.clone(),
+        }
+    }
+
+    pub fn to_config(&self) -> AppConfig {
+        AppConfig {
+            recipes_url: self.recipes_url.clone(),
+            solutions_url: self.solutions_url.clone(),
+            init_git: self.init_git.clone(),
+            create_local_gitignore: self.create_local_gitignore.clone(),
+            open_terminal: self.open_terminal.clone(),
+            open_ide: self.open_ide.clone(),
+        }
+    }
+}
+
 pub enum AppState {
     Input,
     Creating { progress: f64, stage: usize },
@@ -44,7 +80,7 @@ pub struct App {
     pub selected_language_index: usize,
     pub projects: Vec<(String, String)>,
     pub projects_scroll: usize,
-    pub config: AppConfig,
+    pub settings: AllSettings,
     pub settings_categories: Vec<SettingsCategory>,
     pub active_settings_category: usize,
     pub settings_cursor: usize,
@@ -71,13 +107,14 @@ impl App {
     pub fn new() -> Self {
         let config: AppConfig = match confy::load("tui-solution-create", None) {
             Ok(c) => c,
-            Err(e) => {
+            Err(_) => {
                 let cfg = AppConfig::default();
                 _ = confy::store("tui-solution-create", None, &cfg);
                 cfg
             }
         };
-        let languages = Self::load_languages(&config);
+        let settings = AllSettings::from_config(&config);
+        let languages = Self::load_languages(&settings.recipes_url);
         Self {
             main_tabs: vec!["Recipes", "Settings"],
             active_main_tab: 0,
@@ -96,7 +133,7 @@ impl App {
                 ("Rust".to_string(), "blockchain-node".to_string()),
             ],
             projects_scroll: 0,
-            config: config,
+            settings: settings,
             settings_categories: SettingsCategory::all(),
             active_settings_category: 0,
             settings_cursor: 0,
@@ -127,9 +164,9 @@ impl App {
         }
     }
 
-    fn load_languages(config: &AppConfig) -> Vec<String> {
+    fn load_languages(recipes_url: &str) -> Vec<String> {
         let mut langs = Vec::new();
-        for config in get_all_config(&config.recipes_url){
+        for config in get_all_config(recipes_url){
             langs.push(config.name);
         }
         if langs.is_empty() {
@@ -151,7 +188,7 @@ impl App {
         self.language_popup_open = true;
         self.language_popup_in_modal = false;
         self.language_search.clear();
-        self.languages = Self::load_languages(&self.config);
+        self.languages = Self::load_languages(&self.settings.recipes_url);
         self.language_search_cursor = 0;
         self.language_filtered_index = 0;
     }
@@ -181,7 +218,7 @@ impl App {
         let idx = self.settings_cursor;
 
         let mut recipes = Vec::new();
-        for config in get_all_config(&self.config.recipes_url){
+        for config in get_all_config(&self.settings.recipes_url){
             recipes.push(config.name);
         }
         recipes.sort();
@@ -463,10 +500,10 @@ impl App {
     }
 
     fn deactivate_all_list_inputs(&mut self) {
-        self.config.init_git.list_input_active = false;
-        self.config.create_local_gitignore.list_input_active = false;
-        self.config.open_terminal.list_input_active = false;
-        self.config.open_ide.list_input_active = false;
+        self.settings.init_git.list_input_active = false;
+        self.settings.create_local_gitignore.list_input_active = false;
+        self.settings.open_terminal.list_input_active = false;
+        self.settings.open_ide.list_input_active = false;
     }
 
     pub fn get_toggle_for_setting(
@@ -476,13 +513,13 @@ impl App {
     ) -> Option<&mut ToggleWithList> {
         match category {
             SettingsCategory::Git => match index {
-                0 => Some(&mut self.config.init_git),
-                1 => Some(&mut self.config.create_local_gitignore),
+                0 => Some(&mut self.settings.init_git),
+                1 => Some(&mut self.settings.create_local_gitignore),
                 _ => None,
             },
             SettingsCategory::Actions => match index {
-                0 => Some(&mut self.config.open_terminal),
-                1 => Some(&mut self.config.open_ide),
+                0 => Some(&mut self.settings.open_terminal),
+                1 => Some(&mut self.settings.open_ide),
                 _ => None,
             },
             _ => None,
@@ -497,14 +534,14 @@ impl App {
         match category {
             SettingsCategory::General => match settings_cursor {
                 0 => {
-                    self.config.recipes_url = if self.config.recipes_url.is_empty() {
+                    self.settings.recipes_url = if self.settings.recipes_url.is_empty() {
                         "recipes".to_string()
                     } else {
                         String::new()
                     };
                 }
                 1 => {
-                    self.config.solutions_url = if self.config.solutions_url.is_empty() {
+                    self.settings.solutions_url = if self.settings.solutions_url.is_empty() {
                         "solutions".to_string()
                     } else {
                         String::new()
@@ -557,11 +594,11 @@ impl App {
             match self.settings_cursor {
                 0 => {
                     self.settings_edit_index = Some((0, self.settings_cursor));
-                    self.settings_edit_cursor = self.config.recipes_url.len();
+                    self.settings_edit_cursor = self.settings.recipes_url.len();
                 }
-                1 => {
+                1 => {  
                     self.settings_edit_index = Some((1, self.settings_cursor));
-                    self.settings_edit_cursor = self.config.solutions_url.len();
+                    self.settings_edit_cursor = self.settings.solutions_url.len();
                 }
                 _ => {}
             }
@@ -573,24 +610,24 @@ impl App {
     }
 
     pub fn save_settings(&mut self) {
-        // self.config.recipes_url = self.settings_categories
-        let _: Result<(), _> = confy::store("tui-solution-create", None, &self.config);
+        let config = self.settings.to_config();
+        let _: Result<(), _> = confy::store("tui-solution-create", None, &config);
         self.set_status("Settings saved!", Color::Green);
-        // println!("{:?}", self.settings_categories[a.active_settings_category];)
+
     }
 
     fn get_editable_field(&self) -> Option<&String> {
         match self.settings_edit_index {
-            Some((0, _)) => Some(&self.config.recipes_url),
-            Some((1, _)) => Some(&self.config.solutions_url),
+            Some((0, _)) => Some(&self.settings.recipes_url),
+            Some((1, _)) => Some(&self.settings.solutions_url),
             _ => None,
         }
     }
 
     fn get_editable_field_mut(&mut self) -> Option<&mut String> {
         match self.settings_edit_index {
-            Some((0, _)) => Some(&mut self.config.recipes_url),
-            Some((1, _)) => Some(&mut self.config.solutions_url),
+            Some((0, _)) => Some(&mut self.settings.recipes_url),
+            Some((1, _)) => Some(&mut self.settings.solutions_url),
             _ => None,
         }
     }
@@ -732,22 +769,22 @@ impl App {
         match category {
             SettingsCategory::Git => match index {
                 0 => matches!(
-                    self.config.init_git.mode,
+                    self.settings.init_git.mode,
                     ToggleMode::Yes | ToggleMode::YesSome
                 ),
                 1 => matches!(
-                    self.config.create_local_gitignore.mode,
+                    self.settings.create_local_gitignore.mode,
                     ToggleMode::Yes | ToggleMode::YesSome
                 ),
                 _ => false,
             },
             SettingsCategory::Actions => match index {
                 0 => matches!(
-                    self.config.open_terminal.mode,
+                    self.settings.open_terminal.mode,
                     ToggleMode::Yes | ToggleMode::YesSome
                 ),
                 1 => matches!(
-                    self.config.open_ide.mode,
+                    self.settings.open_ide.mode,
                     ToggleMode::Yes | ToggleMode::YesSome
                 ),
                 _ => false,
@@ -759,13 +796,13 @@ impl App {
     pub fn get_toggle_recipes(&self, category: SettingsCategory, index: usize) -> Vec<String> {
         match category {
             SettingsCategory::Git => match index {
-                0 => self.config.init_git.list.clone(),
-                1 => self.config.create_local_gitignore.list.clone(),
+                0 => self.settings.init_git.list.clone(),
+                1 => self.settings.create_local_gitignore.list.clone(),
                 _ => vec![],
             },
             SettingsCategory::Actions => match index {
-                0 => self.config.open_terminal.list.clone(),
-                1 => self.config.open_ide.list.clone(),
+                0 => self.settings.open_terminal.list.clone(),
+                1 => self.settings.open_ide.list.clone(),
                 _ => vec![],
             },
             _ => vec![],
@@ -781,13 +818,13 @@ impl App {
             let category = self.settings_categories[self.active_settings_category];
             match category {
                 SettingsCategory::Git => match idx {
-                    0 => return self.config.init_git.list_input.clone(),
-                    1 => return self.config.create_local_gitignore.list_input.clone(),
+                    0 => return self.settings.init_git.list_input.clone(),
+                    1 => return self.settings.create_local_gitignore.list_input.clone(),
                     _ => {}
                 },
                 SettingsCategory::Actions => match idx {
-                    0 => return self.config.open_terminal.list_input.clone(),
-                    1 => return self.config.open_ide.list_input.clone(),
+                    0 => return self.settings.open_terminal.list_input.clone(),
+                    1 => return self.settings.open_ide.list_input.clone(),
                     _ => {}
                 },
                 _ => {}
