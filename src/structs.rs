@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Deserialize, Default, Serialize)]
+#[derive(Debug, Clone, Deserialize, Default, Serialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum ToggleMode {
     No,

@@ -1,6 +1,6 @@
 mod structs;
 mod generator;
-use structs::{AppConfig, ToggleMode};
+use structs::{AppConfig, ToggleMode, ToggleWithList};
 
 use std::{io, fs};
 use std::time::Duration;
@@ -60,8 +60,10 @@ struct App {
     settings_categories: Vec<SettingsCategory>,
     active_settings_category: usize,
     settings_cursor: usize,
-    settings_edit_index: Option<usize>,
+    settings_edit_index: Option<(usize, usize)>,
     settings_edit_cursor: usize,
+    list_edit_index: Option<usize>,
+    list_input_cursor: usize,
     state: AppState,
     creation_stages: Vec<&'static str>,
     focus_section: FocusSection,
@@ -104,6 +106,8 @@ impl App {
             settings_cursor: 0,
             settings_edit_index: None,
             settings_edit_cursor: 0,
+            list_edit_index: None,
+            list_input_cursor: 0,
             state: AppState::Input,
             creation_stages: vec![
                 "Initializing project...",
@@ -222,6 +226,7 @@ impl App {
     fn next_settings_category(&mut self) {
         self.active_settings_category = (self.active_settings_category + 1) % self.settings_categories.len();
         self.settings_cursor = 0;
+        self.list_edit_index = None;
     }
 
     fn previous_settings_category(&mut self) {
@@ -231,6 +236,7 @@ impl App {
             self.active_settings_category = self.settings_categories.len() - 1;
         }
         self.settings_cursor = 0;
+        self.list_edit_index = None;
     }
 
     fn enter_input_mode(&mut self) {
@@ -297,6 +303,9 @@ impl App {
     }
 
     fn move_settings_cursor(&mut self, direction: i8) {
+        if self.list_edit_index.is_some() {
+            return;
+        }
         let count = self.get_settings_items_count();
         if direction > 0 {
             if self.settings_cursor < count - 1 {
@@ -317,13 +326,34 @@ impl App {
         self.config.open_ide.list_input_active = false;
     }
 
+    fn get_toggle_for_setting(&mut self, category: SettingsCategory, index: usize) -> Option<&mut ToggleWithList> {
+        match category {
+            SettingsCategory::Git => {
+                match index {
+                    0 => Some(&mut self.config.init_git),
+                    1 => Some(&mut self.config.create_local_gitignore),
+                    _ => None,
+                }
+            }
+            SettingsCategory::Actions => {
+                match index {
+                    0 => Some(&mut self.config.open_terminal),
+                    1 => Some(&mut self.config.open_ide),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
     fn toggle_setting(&mut self) {
         self.deactivate_all_list_inputs();
         let category = self.settings_categories[self.active_settings_category];
+        let settings_cursor = self.settings_cursor;
 
         match category {
             SettingsCategory::General => {
-                match self.settings_cursor {
+                match settings_cursor {
                     0 => {
                         self.config.recipes_url = if self.config.recipes_url.is_empty() {
                             "recipes".to_string()
@@ -341,38 +371,30 @@ impl App {
                     _ => {}
                 }
             }
-            SettingsCategory::Git => {
-                match self.settings_cursor {
-                    0 => {
-                        self.config.init_git.mode = match self.config.init_git.mode {
-                            ToggleMode::No | ToggleMode::YesSome => ToggleMode::Yes,
-                            ToggleMode::Yes => ToggleMode::No,
-                        };
+            SettingsCategory::Git | SettingsCategory::Actions => {
+                let needs_list_input = if let Some(toggle) = self.get_toggle_for_setting(category, settings_cursor) {
+                    toggle.mode = match toggle.mode {
+                        ToggleMode::No => ToggleMode::Yes,
+                        ToggleMode::Yes => ToggleMode::YesSome,
+                        ToggleMode::YesSome => ToggleMode::No,
+                    };
+                    toggle.mode == ToggleMode::YesSome
+                } else {
+                    false
+                };
+
+                if needs_list_input {
+                    self.list_edit_index = Some(settings_cursor);
+                    self.list_input_cursor = 0;
+                    if let Some(toggle) = self.get_toggle_for_setting(category, settings_cursor) {
+                        toggle.list_input_active = true;
+                        toggle.list_input.clear();
                     }
-                    1 => {
-                        self.config.create_local_gitignore.mode = match self.config.create_local_gitignore.mode {
-                            ToggleMode::No | ToggleMode::YesSome => ToggleMode::Yes,
-                            ToggleMode::Yes => ToggleMode::No,
-                        };
+                } else {
+                    if let Some(toggle) = self.get_toggle_for_setting(category, settings_cursor) {
+                        toggle.list_input_active = false;
                     }
-                    _ => {}
-                }
-            }
-            SettingsCategory::Actions => {
-                match self.settings_cursor {
-                    0 => {
-                        self.config.open_terminal.mode = match self.config.open_terminal.mode {
-                            ToggleMode::No | ToggleMode::YesSome => ToggleMode::Yes,
-                            ToggleMode::Yes => ToggleMode::No,
-                        };
-                    }
-                    1 => {
-                        self.config.open_ide.mode = match self.config.open_ide.mode {
-                            ToggleMode::No | ToggleMode::YesSome => ToggleMode::Yes,
-                            ToggleMode::Yes => ToggleMode::No,
-                        };
-                    }
-                    _ => {}
+                    self.list_edit_index = None;
                 }
             }
         }
@@ -413,11 +435,11 @@ impl App {
         if category == SettingsCategory::General {
             match self.settings_cursor {
                 0 => {
-                    self.settings_edit_index = Some(0);
+                    self.settings_edit_index = Some((0, self.settings_cursor));
                     self.settings_edit_cursor = self.config.recipes_url.len();
                 }
                 1 => {
-                    self.settings_edit_index = Some(1);
+                    self.settings_edit_index = Some((1, self.settings_cursor));
                     self.settings_edit_cursor = self.config.solutions_url.len();
                 }
                 _ => {}
@@ -431,16 +453,16 @@ impl App {
 
     fn get_editable_field(&self) -> Option<&String> {
         match self.settings_edit_index {
-            Some(0) => Some(&self.config.recipes_url),
-            Some(1) => Some(&self.config.solutions_url),
+            Some((0, _)) => Some(&self.config.recipes_url),
+            Some((1, _)) => Some(&self.config.solutions_url),
             _ => None,
         }
     }
 
     fn get_editable_field_mut(&mut self) -> Option<&mut String> {
         match self.settings_edit_index {
-            Some(0) => Some(&mut self.config.recipes_url),
-            Some(1) => Some(&mut self.config.solutions_url),
+            Some((0, _)) => Some(&mut self.config.recipes_url),
+            Some((1, _)) => Some(&mut self.config.solutions_url),
             _ => None,
         }
     }
@@ -477,6 +499,78 @@ impl App {
         }
     }
 
+    fn insert_list_char(&mut self, c: char) {
+        if let Some(idx) = self.list_edit_index {
+            let cursor = self.list_input_cursor;
+            let category = self.settings_categories[self.active_settings_category];
+            if let Some(toggle) = self.get_toggle_for_setting(category, idx) {
+                toggle.list_input.insert(cursor, c);
+            }
+            self.list_input_cursor += 1;
+        }
+    }
+
+    fn delete_list_char(&mut self) {
+        if self.list_input_cursor > 0 {
+            if let Some(idx) = self.list_edit_index {
+                let cursor = self.list_input_cursor - 1;
+                let category = self.settings_categories[self.active_settings_category];
+                if let Some(toggle) = self.get_toggle_for_setting(category, idx) {
+                    toggle.list_input.remove(cursor);
+                }
+                self.list_input_cursor -= 1;
+            }
+        }
+    }
+
+    fn move_list_cursor_left(&mut self) {
+        if self.list_input_cursor > 0 {
+            self.list_input_cursor -= 1;
+        }
+    }
+
+    fn move_list_cursor_right(&mut self) {
+        let cursor = self.list_input_cursor;
+        if let Some(idx) = self.list_edit_index {
+            let category = self.settings_categories[self.active_settings_category];
+            if let Some(toggle) = self.get_toggle_for_setting(category, idx) {
+                if cursor < toggle.list_input.len() {
+                    self.list_input_cursor += 1;
+                }
+            }
+        }
+    }
+
+    fn save_list_input(&mut self) {
+        if let Some(idx) = self.list_edit_index {
+            let category = self.settings_categories[self.active_settings_category];
+            if let Some(toggle) = self.get_toggle_for_setting(category, idx) {
+                let new_list: Vec<String> = toggle.list_input
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                toggle.list = new_list;
+                toggle.list_input_active = false;
+                toggle.list_input.clear();
+                self.list_edit_index = None;
+                self.list_input_cursor = 0;
+            }
+        }
+    }
+
+    fn cancel_list_input(&mut self) {
+        if let Some(idx) = self.list_edit_index {
+            let category = self.settings_categories[self.active_settings_category];
+            if let Some(toggle) = self.get_toggle_for_setting(category, idx) {
+                toggle.list_input_active = false;
+                toggle.list_input.clear();
+                self.list_edit_index = None;
+                self.list_input_cursor = 0;
+            }
+        }
+    }
+
     fn set_status(&mut self, msg: &str, _color: Color) {
         self.status_message = Some((msg.to_string(), Duration::from_secs(3)));
     }
@@ -509,6 +603,58 @@ impl App {
             }
             _ => false,
         }
+    }
+
+    fn get_toggle_templates(&self, category: SettingsCategory, index: usize) -> Vec<String> {
+        match category {
+            SettingsCategory::Git => {
+                match index {
+                    0 => self.config.init_git.list.clone(),
+                    1 => self.config.create_local_gitignore.list.clone(),
+                    _ => vec![],
+                }
+            }
+            SettingsCategory::Actions => {
+                match index {
+                    0 => self.config.open_terminal.list.clone(),
+                    1 => self.config.open_ide.list.clone(),
+                    _ => vec![],
+                }
+            }
+            _ => vec![],
+        }
+    }
+
+    fn is_list_editing(&self, index: usize) -> bool {
+        self.list_edit_index == Some(index)
+    }
+
+    fn get_list_input(&self) -> String {
+        if let Some(idx) = self.list_edit_index {
+            let category = self.settings_categories[self.active_settings_category];
+            match category {
+                SettingsCategory::Git => {
+                    match idx {
+                        0 => return self.config.init_git.list_input.clone(),
+                        1 => return self.config.create_local_gitignore.list_input.clone(),
+                        _ => {}
+                    }
+                }
+                SettingsCategory::Actions => {
+                    match idx {
+                        0 => return self.config.open_terminal.list_input.clone(),
+                        1 => return self.config.open_ide.list_input.clone(),
+                        _ => {}
+                    }
+                }
+                _ => {}
+            }
+        }
+        String::new()
+    }
+
+    fn get_list_input_cursor(&self) -> usize {
+        self.list_input_cursor
     }
 }
 
@@ -578,6 +724,8 @@ fn run_app<B: ratatui::backend::Backend>(
                                     } else if app.active_main_tab == 1 {
                                         if app.settings_edit_index.is_some() {
                                             app.move_setting_cursor_left();
+                                        } else if app.list_edit_index.is_some() {
+                                            app.move_list_cursor_left();
                                         } else {
                                             app.previous_settings_category();
                                         }
@@ -591,6 +739,8 @@ fn run_app<B: ratatui::backend::Backend>(
                                     } else if app.active_main_tab == 1 {
                                         if app.settings_edit_index.is_some() {
                                             app.move_setting_cursor_right();
+                                        } else if app.list_edit_index.is_some() {
+                                            app.move_list_cursor_right();
                                         } else {
                                             app.next_settings_category();
                                         }
@@ -600,7 +750,7 @@ fn run_app<B: ratatui::backend::Backend>(
                                     if app.language_popup_open {
                                         app.move_language_selection(-1);
                                     } else if app.active_main_tab == 1 {
-                                        if app.settings_edit_index.is_none() {
+                                        if app.settings_edit_index.is_none() && app.list_edit_index.is_none() {
                                             app.move_settings_cursor(-1);
                                         }
                                     } else if app.active_main_tab == 0 {
@@ -611,7 +761,7 @@ fn run_app<B: ratatui::backend::Backend>(
                                     if app.language_popup_open {
                                         app.move_language_selection(1);
                                     } else if app.active_main_tab == 1 {
-                                        if app.settings_edit_index.is_none() {
+                                        if app.settings_edit_index.is_none() && app.list_edit_index.is_none() {
                                             app.move_settings_cursor(1);
                                         }
                                     } else if app.active_main_tab == 0 {
@@ -628,6 +778,8 @@ fn run_app<B: ratatui::backend::Backend>(
                                     } else if app.active_main_tab == 1 {
                                         if app.settings_edit_index.is_some() {
                                             app.stop_editing_setting();
+                                        } else if app.list_edit_index.is_some() {
+                                            app.save_list_input();
                                         } else {
                                             let category = app.settings_categories[app.active_settings_category];
                                             if category == SettingsCategory::General {
@@ -646,6 +798,8 @@ fn run_app<B: ratatui::backend::Backend>(
                                     } else if app.active_main_tab == 1 {
                                         if app.settings_edit_index.is_some() {
                                             app.stop_editing_setting();
+                                        } else if app.list_edit_index.is_some() {
+                                            app.cancel_list_input();
                                         }
                                     }
                                 }
@@ -657,6 +811,8 @@ fn run_app<B: ratatui::backend::Backend>(
                                     } else if app.active_main_tab == 1 {
                                         if app.settings_edit_index.is_some() {
                                             app.delete_setting_char();
+                                        } else if app.list_edit_index.is_some() {
+                                            app.delete_list_char();
                                         }
                                     }
                                 }
@@ -673,7 +829,7 @@ fn run_app<B: ratatui::backend::Backend>(
                                     }
                                 }
                                 KeyCode::Char(' ') => {
-                                    if app.active_main_tab == 1 && app.settings_edit_index.is_none() {
+                                    if app.active_main_tab == 1 && app.settings_edit_index.is_none() && app.list_edit_index.is_none() {
                                         app.toggle_setting();
                                     }
                                 }
@@ -685,6 +841,8 @@ fn run_app<B: ratatui::backend::Backend>(
                                     } else if app.active_main_tab == 1 {
                                         if app.settings_edit_index.is_some() {
                                             app.insert_setting_char(c);
+                                        } else if app.list_edit_index.is_some() {
+                                            app.insert_list_char(c);
                                         }
                                     }
                                 }
@@ -815,9 +973,16 @@ fn render_status_bar(f: &mut Frame, app: &App, area: Rect) {
             Span::raw(" Quit"),
         ])
     } else {
+        let help_text = if app.list_edit_index.is_some() {
+            "Enter Save  Esc Cancel"
+        } else if app.settings_edit_index.is_some() {
+            "Enter Save  Esc Cancel"
+        } else {
+            "Enter/Space Toggle"
+        };
         Line::from(vec![
-            Span::styled("Enter/Space", Style::default().fg(Color::Green)),
-            Span::raw(" Toggle  "),
+            Span::styled(help_text, Style::default().fg(Color::Green)),
+            Span::raw("  "),
             Span::styled("↑/↓", Style::default().fg(Color::Cyan)),
             Span::raw(" Navigate  "),
             Span::styled("←/→", Style::default().fg(Color::Magenta)),
@@ -1062,11 +1227,15 @@ fn render_settings_tab(f: &mut Frame, app: &App, area: Rect) {
     let items: Vec<ListItem> = settings_items
         .iter()
         .enumerate()
-        .map(|(i, (label, description, is_enabled, is_editing, edit_value))| {
+        .map(|(i, (label, description, is_enabled, has_templates, is_editing, edit_value, templates, is_list_editing, list_input))| {
             let is_selected = i == app.settings_cursor;
 
             let checkbox = if *is_enabled {
-                Span::styled("[X]", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
+                if *has_templates {
+                    Span::styled("[~]", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+                } else {
+                    Span::styled("[X]", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
+                }
             } else {
                 Span::styled("[ ]", Style::default().fg(Color::DarkGray))
             };
@@ -1080,7 +1249,16 @@ fn render_settings_tab(f: &mut Frame, app: &App, area: Rect) {
                 Style::default().fg(Color::White)
             };
 
-            let value_display = if *is_editing {
+            let value_display = if *is_list_editing {
+                let cursor_char = if (std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() / 500) % 2 == 0 {
+                    "█"
+                } else {
+                    " "
+                };
+                let before: String = list_input.chars().take(app.get_list_input_cursor()).collect();
+                let after: String = list_input.chars().skip(app.get_list_input_cursor()).collect();
+                format!(" {}{}{}", before, cursor_char, after)
+            } else if *is_editing {
                 let cursor_char = if (std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() / 500) % 2 == 0 {
                     "█"
                 } else {
@@ -1093,12 +1271,14 @@ fn render_settings_tab(f: &mut Frame, app: &App, area: Rect) {
                 }
             } else if !edit_value.as_ref().map(|s| s.is_empty()).unwrap_or(true) {
                 format!(" {}", edit_value.as_ref().unwrap())
+            } else if !templates.is_empty() {
+                format!(" ({})", templates.join(", "))
             } else {
                 String::new()
             };
 
             let content = Line::from(vec![
-                Span::styled(format!("{}  {:<20}", checkbox, label), row_style),
+                Span::styled(format!("{}  {:<18}", checkbox, label), row_style),
                 Span::styled(description.to_string(), Style::default().fg(Color::DarkGray)),
                 Span::styled(value_display, Style::default().fg(Color::Cyan)),
             ]);
@@ -1118,7 +1298,7 @@ fn render_settings_tab(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(settings_list, chunks[1]);
 }
 
-fn get_settings_for_category(app: &App) -> Vec<(&'static str, &'static str, bool, bool, Option<String>)> {
+fn get_settings_for_category(app: &App) -> Vec<(&'static str, &'static str, bool, bool, bool, Option<String>, Vec<String>, bool, String)> {
     let category = app.settings_categories[app.active_settings_category];
     match category {
         SettingsCategory::General => {
@@ -1127,15 +1307,23 @@ fn get_settings_for_category(app: &App) -> Vec<(&'static str, &'static str, bool
                     "Recipes URL",
                     "Path to recipes directory",
                     !app.config.recipes_url.is_empty(),
-                    app.settings_edit_index == Some(0),
+                    false,
+                    app.settings_edit_index.map(|(_, c)| c) == Some(0),
                     Some(app.config.recipes_url.clone()),
+                    vec![],
+                    false,
+                    String::new(),
                 ),
                 (
                     "Solutions URL",
                     "Path to solutions directory",
                     !app.config.solutions_url.is_empty(),
-                    app.settings_edit_index == Some(1),
+                    false,
+                    app.settings_edit_index.map(|(_, c)| c) == Some(1),
                     Some(app.config.solutions_url.clone()),
+                    vec![],
+                    false,
+                    String::new(),
                 ),
             ]
         }
@@ -1145,15 +1333,23 @@ fn get_settings_for_category(app: &App) -> Vec<(&'static str, &'static str, bool
                     "Init Git",
                     "Initialize git repository",
                     app.is_toggle_enabled(SettingsCategory::Git, 0),
+                    app.config.init_git.mode == ToggleMode::YesSome,
                     false,
                     None,
+                    app.get_toggle_templates(SettingsCategory::Git, 0),
+                    app.is_list_editing(0),
+                    app.get_list_input().to_string(),
                 ),
                 (
                     "Create .gitignore",
                     "Create local .gitignore file",
                     app.is_toggle_enabled(SettingsCategory::Git, 1),
+                    app.config.create_local_gitignore.mode == ToggleMode::YesSome,
                     false,
                     None,
+                    app.get_toggle_templates(SettingsCategory::Git, 1),
+                    app.is_list_editing(1),
+                    app.get_list_input().to_string(),
                 ),
             ]
         }
@@ -1163,15 +1359,23 @@ fn get_settings_for_category(app: &App) -> Vec<(&'static str, &'static str, bool
                     "Open Terminal",
                     "Open terminal after creation",
                     app.is_toggle_enabled(SettingsCategory::Actions, 0),
+                    app.config.open_terminal.mode == ToggleMode::YesSome,
                     false,
                     None,
+                    app.get_toggle_templates(SettingsCategory::Actions, 0),
+                    app.is_list_editing(0),
+                    app.get_list_input().to_string(),
                 ),
                 (
                     "Open IDE",
                     "Open IDE after creation",
                     app.is_toggle_enabled(SettingsCategory::Actions, 1),
+                    app.config.open_ide.mode == ToggleMode::YesSome,
                     false,
                     None,
+                    app.get_toggle_templates(SettingsCategory::Actions, 1),
+                    app.is_list_editing(1),
+                    app.get_list_input().to_string(),
                 ),
             ]
         }
