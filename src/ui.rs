@@ -164,6 +164,8 @@ fn render_status_bar(f: &mut Frame, app: &App, area: Rect) {
                 Span::raw(" Toggle  "),
                 Span::styled("c", Style::default().fg(Color::Cyan)),
                 Span::raw(" Select recipes  "),
+                Span::styled("s", Style::default().fg(Color::Green)),
+                Span::raw(" Save  "),
                 Span::styled("↑/↓", Style::default().fg(Color::Cyan)),
                 Span::raw(" Navigate  "),
                 Span::styled("←/→", Style::default().fg(Color::Magenta)),

@@ -3,7 +3,7 @@ use crate::utils::get_all_config;
 use ratatui::prelude::Color;
 use std::{fs, time::Duration};
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum SettingsCategory {
     General,
     Git,
@@ -572,6 +572,13 @@ impl App {
         self.settings_edit_index = None;
     }
 
+    pub fn save_settings(&mut self) {
+        // self.config.recipes_url = self.settings_categories
+        let _: Result<(), _> = confy::store("tui-solution-create", None, &self.config);
+        self.set_status("Settings saved!", Color::Green);
+        // println!("{:?}", self.settings_categories[a.active_settings_category];)
+    }
+
     fn get_editable_field(&self) -> Option<&String> {
         match self.settings_edit_index {
             Some((0, _)) => Some(&self.config.recipes_url),
@@ -708,7 +715,7 @@ impl App {
     }
 
     pub fn set_status(&mut self, msg: &str, _color: Color) {
-        self.status_message = Some((msg.to_string(), Duration::from_secs(3)));
+        self.status_message = Some((msg.to_string(), Duration::from_secs(2)));
     }
 
     pub fn update_status(&mut self) {

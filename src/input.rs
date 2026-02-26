@@ -93,6 +93,15 @@ fn handle_input_state(app: &mut App, key: KeyCode, modifiers: KeyModifiers) {
                 app.previous_main_tab();
             }
         }
+        KeyCode::Char('s') if app.active_main_tab == 1 => {
+            if app.settings_edit_index.is_some() {
+                app.insert_setting_char('s');
+            } else if app.list_edit_index.is_some() {
+                app.insert_list_char('s');
+            } else {
+                app.save_settings();
+            }
+        }
         KeyCode::Char('q') | KeyCode::Char('Q') => {
             if app.settings_edit_index.is_none()
                 && app.list_edit_index.is_none()
