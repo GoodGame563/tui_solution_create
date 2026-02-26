@@ -43,21 +43,19 @@ pub fn get_config_from_path(path: &str) -> Result<Config, ConfigError> {
     Ok(serde_yaml::from_str(&yaml)?)
 }
 
-pub fn get_all_config(dir: &str) -> Vec<Config>{
+pub fn get_all_config(dir: &str) -> Vec<Config> {
     let mut configs: Vec<Config> = vec![];
     if let Ok(entries) = fs::read_dir(dir) {
         for entry in entries.flatten() {
             let path = entry.path().to_str().unwrap_or("lol").to_string();
-                let config = match get_config_from_path(&path) {
-                    Ok(c) => c,
-                    Err(_) => {
-                        continue;
-                    }
-                };
-                configs.push(config);
+            let config = match get_config_from_path(&path) {
+                Ok(c) => c,
+                Err(_) => {
+                    continue;
+                }
+            };
+            configs.push(config);
         }
     }
     configs
-
 }
-

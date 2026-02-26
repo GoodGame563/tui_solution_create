@@ -61,3 +61,13 @@ pub struct FileEntry {
     pub path: String,
     pub content: String,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LeetCodeProblem {
+    pub title: String,
+    pub difficulty: String,
+    pub description: String,
+    pub example_testcases: String,
+    pub likes: u64,
+    pub dislikes: u64,
+}

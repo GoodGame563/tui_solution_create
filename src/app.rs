@@ -166,7 +166,7 @@ impl App {
 
     fn load_languages(recipes_url: &str) -> Vec<String> {
         let mut langs = Vec::new();
-        for config in get_all_config(recipes_url){
+        for config in get_all_config(recipes_url) {
             langs.push(config.name);
         }
         if langs.is_empty() {
@@ -182,7 +182,6 @@ impl App {
             .cloned()
             .unwrap_or_else(|| "unknown".to_string())
     }
-
 
     pub fn open_language_popup(&mut self) {
         self.language_popup_open = true;
@@ -218,7 +217,7 @@ impl App {
         let idx = self.settings_cursor;
 
         let mut recipes = Vec::new();
-        for config in get_all_config(&self.settings.recipes_url){
+        for config in get_all_config(&self.settings.recipes_url) {
             recipes.push(config.name);
         }
         recipes.sort();
@@ -596,7 +595,7 @@ impl App {
                     self.settings_edit_index = Some((0, self.settings_cursor));
                     self.settings_edit_cursor = self.settings.recipes_url.len();
                 }
-                1 => {  
+                1 => {
                     self.settings_edit_index = Some((1, self.settings_cursor));
                     self.settings_edit_cursor = self.settings.solutions_url.len();
                 }
@@ -613,7 +612,6 @@ impl App {
         let config = self.settings.to_config();
         let _: Result<(), _> = confy::store("tui-solution-create", None, &config);
         self.set_status("Settings saved!", Color::Green);
-
     }
 
     fn get_editable_field(&self) -> Option<&String> {

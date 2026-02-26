@@ -3298,6 +3298,7 @@ dependencies = [
  "dirs",
  "ratatui 0.30.0",
  "ratatui-explorer",
+ "regex",
  "reqwest",
  "serde",
  "serde_json",
