@@ -1,6 +1,6 @@
 mod structs;
 mod generator;
-use structs::{AppConfig, ToggleMode, ToggleWithList};
+use structs::{AppConfig, ToggleMode};
 
 use std::{io, fs};
 use std::time::Duration;
@@ -15,26 +15,60 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect, Alignment},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Paragraph, Tabs, Wrap, Gauge},
+    widgets::{Block, Borders, List, ListItem, Paragraph, Tabs, Gauge, Clear, Padding},
     Frame, Terminal,
 };
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FocusSection {
+    UrlInput,
+    Language,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SettingsCategory {
+    General,
+    Git,
+    Actions,
+}
+
+impl SettingsCategory {
+    fn all() -> Vec<SettingsCategory> {
+        vec![SettingsCategory::General, SettingsCategory::Git, SettingsCategory::Actions]
+    }
+
+    fn title(&self) -> &'static str {
+        match self {
+            SettingsCategory::General => "General",
+            SettingsCategory::Git => "Git",
+            SettingsCategory::Actions => "Actions",
+        }
+    }
+}
+
 struct App {
-    tabs: Vec<&'static str>,
-    active_tab_index: usize,
+    main_tabs: Vec<&'static str>,
+    active_main_tab: usize,
     url_input: String,
     cursor_position: usize,
     input_mode: bool,
     languages: Vec<String>,
     selected_language_index: usize,
-    projects: Vec<(String, String)>, // (language, name)
+    projects: Vec<(String, String)>,
     projects_scroll: usize,
     config: AppConfig,
+    settings_categories: Vec<SettingsCategory>,
+    active_settings_category: usize,
     settings_cursor: usize,
-    settings_edit_index: Option<usize>, // Индекс редактируемого поля (2=Recipes URL, 3=Solutions URL)
+    settings_edit_index: Option<usize>,
     settings_edit_cursor: usize,
     state: AppState,
     creation_stages: Vec<&'static str>,
+    focus_section: FocusSection,
+    language_popup_open: bool,
+    language_search: String,
+    language_search_cursor: usize,
+    status_message: Option<(String, Duration)>,
 }
 
 enum AppState {
@@ -47,8 +81,8 @@ impl App {
     fn new() -> Self {
         let languages = Self::load_languages();
         Self {
-            tabs: vec!["Recipes", "Settings"],
-            active_tab_index: 0,
+            main_tabs: vec!["Recipes", "Settings"],
+            active_main_tab: 0,
             url_input: String::new(),
             cursor_position: 0,
             input_mode: false,
@@ -65,6 +99,8 @@ impl App {
             ],
             projects_scroll: 0,
             config: AppConfig::default(),
+            settings_categories: SettingsCategory::all(),
+            active_settings_category: 0,
             settings_cursor: 0,
             settings_edit_index: None,
             settings_edit_cursor: 0,
@@ -77,6 +113,11 @@ impl App {
                 "Building solution...",
                 "Finalizing...",
             ],
+            focus_section: FocusSection::UrlInput,
+            language_popup_open: false,
+            language_search: String::new(),
+            language_search_cursor: 0,
+            status_message: None,
         }
     }
 
@@ -111,16 +152,85 @@ impl App {
         }
     }
 
-    fn next_tab(&mut self) {
-        self.active_tab_index = (self.active_tab_index + 1) % self.tabs.len();
+    fn open_language_popup(&mut self) {
+        self.language_popup_open = true;
+        self.language_search.clear();
+        self.language_search_cursor = 0;
     }
 
-    fn previous_tab(&mut self) {
-        if self.active_tab_index > 0 {
-            self.active_tab_index -= 1;
+    fn close_language_popup(&mut self) {
+        self.language_popup_open = false;
+    }
+
+    fn confirm_language_selection(&mut self) {
+        self.language_popup_open = false;
+        self.language_search.clear();
+        self.language_search_cursor = 0;
+    }
+
+    fn get_filtered_languages(&self) -> Vec<(usize, String)> {
+        if self.language_search.is_empty() {
+            self.languages.iter()
+                .enumerate()
+                .map(|(i, lang)| (i, lang.clone()))
+                .collect()
         } else {
-            self.active_tab_index = self.tabs.len() - 1;
+            self.languages.iter()
+                .enumerate()
+                .filter(|(_, lang)| lang.to_lowercase().contains(&self.language_search.to_lowercase()))
+                .map(|(i, lang)| (i, lang.clone()))
+                .collect()
         }
+    }
+
+    fn move_language_selection(&mut self, direction: i8) {
+        if direction > 0 {
+            self.selected_language_index = (self.selected_language_index + 1) % self.languages.len();
+        } else {
+            self.selected_language_index = if self.selected_language_index == 0 {
+                self.languages.len() - 1
+            } else {
+                self.selected_language_index - 1
+            };
+        }
+    }
+
+    fn insert_language_search_char(&mut self, c: char) {
+        self.language_search.insert(self.language_search_cursor, c);
+        self.language_search_cursor += 1;
+    }
+
+    fn delete_language_search_char(&mut self) {
+        if self.language_search_cursor > 0 {
+            self.language_search.remove(self.language_search_cursor - 1);
+            self.language_search_cursor -= 1;
+        }
+    }
+
+    fn next_main_tab(&mut self) {
+        self.active_main_tab = (self.active_main_tab + 1) % self.main_tabs.len();
+    }
+
+    fn previous_main_tab(&mut self) {
+        if self.active_main_tab > 0 {
+            self.active_main_tab -= 1;
+        } else {
+            self.active_main_tab = self.main_tabs.len() - 1;
+        }
+    }
+
+    fn next_settings_category(&mut self) {
+        self.active_settings_category = (self.active_settings_category + 1) % self.settings_categories.len();
+        self.settings_cursor = 0;
+    }
+
+    fn previous_settings_category(&mut self) {
+        if self.active_settings_category > 0 {
+            self.active_settings_category -= 1;
+        } else {
+            self.active_settings_category = self.settings_categories.len() - 1;
+        }
+        self.settings_cursor = 0;
     }
 
     fn enter_input_mode(&mut self) {
@@ -178,10 +288,18 @@ impl App {
         }
     }
 
+    fn get_settings_items_count(&self) -> usize {
+        match self.settings_categories[self.active_settings_category] {
+            SettingsCategory::General => 2,
+            SettingsCategory::Git => 2,
+            SettingsCategory::Actions => 2,
+        }
+    }
+
     fn move_settings_cursor(&mut self, direction: i8) {
-        let settings_count = 6;
+        let count = self.get_settings_items_count();
         if direction > 0 {
-            if self.settings_cursor < settings_count - 1 {
+            if self.settings_cursor < count - 1 {
                 self.settings_cursor += 1;
             }
         } else {
@@ -201,59 +319,62 @@ impl App {
 
     fn toggle_setting(&mut self) {
         self.deactivate_all_list_inputs();
+        let category = self.settings_categories[self.active_settings_category];
 
-        match self.settings_cursor {
-            0 => {
-                self.config.init_git.mode = match self.config.init_git.mode {
-                    ToggleMode::No => ToggleMode::Yes,
-                    ToggleMode::Yes => ToggleMode::YesSome,
-                    ToggleMode::YesSome => ToggleMode::No,
-                };
-                if let ToggleMode::YesSome = self.config.init_git.mode {
-                    self.config.init_git.list_input_active = true;
+        match category {
+            SettingsCategory::General => {
+                match self.settings_cursor {
+                    0 => {
+                        self.config.recipes_url = if self.config.recipes_url.is_empty() {
+                            "recipes".to_string()
+                        } else {
+                            String::new()
+                        };
+                    }
+                    1 => {
+                        self.config.solutions_url = if self.config.solutions_url.is_empty() {
+                            "solutions".to_string()
+                        } else {
+                            String::new()
+                        };
+                    }
+                    _ => {}
                 }
             }
-            1 => {
-                self.config.create_local_gitignore.mode = match self.config.create_local_gitignore.mode {
-                    ToggleMode::No => ToggleMode::Yes,
-                    ToggleMode::Yes => ToggleMode::YesSome,
-                    ToggleMode::YesSome => ToggleMode::No,
-                };
-                if let ToggleMode::YesSome = self.config.create_local_gitignore.mode {
-                    self.config.create_local_gitignore.list_input_active = true;
+            SettingsCategory::Git => {
+                match self.settings_cursor {
+                    0 => {
+                        self.config.init_git.mode = match self.config.init_git.mode {
+                            ToggleMode::No | ToggleMode::YesSome => ToggleMode::Yes,
+                            ToggleMode::Yes => ToggleMode::No,
+                        };
+                    }
+                    1 => {
+                        self.config.create_local_gitignore.mode = match self.config.create_local_gitignore.mode {
+                            ToggleMode::No | ToggleMode::YesSome => ToggleMode::Yes,
+                            ToggleMode::Yes => ToggleMode::No,
+                        };
+                    }
+                    _ => {}
                 }
             }
-            2 => {} // Recipes URL - редактируется отдельно
-            3 => {} // Solutions URL - редактируется отдельно
-            4 => {
-                self.config.open_terminal.mode = match self.config.open_terminal.mode {
-                    ToggleMode::No => ToggleMode::Yes,
-                    ToggleMode::Yes => ToggleMode::YesSome,
-                    ToggleMode::YesSome => ToggleMode::No,
-                };
-                if let ToggleMode::YesSome = self.config.open_terminal.mode {
-                    self.config.open_terminal.list_input_active = true;
+            SettingsCategory::Actions => {
+                match self.settings_cursor {
+                    0 => {
+                        self.config.open_terminal.mode = match self.config.open_terminal.mode {
+                            ToggleMode::No | ToggleMode::YesSome => ToggleMode::Yes,
+                            ToggleMode::Yes => ToggleMode::No,
+                        };
+                    }
+                    1 => {
+                        self.config.open_ide.mode = match self.config.open_ide.mode {
+                            ToggleMode::No | ToggleMode::YesSome => ToggleMode::Yes,
+                            ToggleMode::Yes => ToggleMode::No,
+                        };
+                    }
+                    _ => {}
                 }
             }
-            5 => {
-                self.config.open_ide.mode = match self.config.open_ide.mode {
-                    ToggleMode::No => ToggleMode::Yes,
-                    ToggleMode::Yes => ToggleMode::YesSome,
-                    ToggleMode::YesSome => ToggleMode::No,
-                };
-                if let ToggleMode::YesSome = self.config.open_ide.mode {
-                    self.config.open_ide.list_input_active = true;
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn get_toggle_text(&self, toggle: &ToggleWithList) -> String {
-        match toggle.mode {
-            ToggleMode::No => "No".to_string(),
-            ToggleMode::Yes => "Yes".to_string(),
-            ToggleMode::YesSome => format!("Some ({})", toggle.list.join(", ")),
         }
     }
 
@@ -261,6 +382,8 @@ impl App {
         if !self.url_input.is_empty() {
             self.state = AppState::Creating { progress: 0.0, stage: 0 };
             self.input_mode = false;
+        } else {
+            self.set_status("Enter project name", Color::Yellow);
         }
     }
 
@@ -273,6 +396,7 @@ impl App {
                 if *stage >= self.creation_stages.len() {
                     self.state = AppState::Done;
                     self.projects.insert(0, (self.selected_language(), self.url_input.clone()));
+                    self.set_status(&format!("Project '{}' created!", self.url_input), Color::Green);
                     self.url_input.clear();
                     self.cursor_position = 0;
                 }
@@ -284,64 +408,20 @@ impl App {
         self.state = AppState::Input;
     }
 
-    fn get_current_toggle(&mut self) -> Option<&mut ToggleWithList> {
-        match self.settings_cursor {
-            0 => Some(&mut self.config.init_git),
-            1 => Some(&mut self.config.create_local_gitignore),
-            4 => Some(&mut self.config.open_terminal),
-            5 => Some(&mut self.config.open_ide),
-            _ => None,
-        }
-    }
-
-    fn update_list_input(&mut self, c: char) {
-        if let Some(toggle) = self.get_current_toggle() {
-            if toggle.list_input_active {
-                toggle.list_input.push(c);
-            }
-        }
-    }
-
-    fn delete_list_input_char(&mut self) {
-        if let Some(toggle) = self.get_current_toggle() {
-            if toggle.list_input_active && !toggle.list_input.is_empty() {
-                toggle.list_input.pop();
-            }
-        }
-    }
-
-    fn save_list_input(&mut self) {
-        if let Some(toggle) = self.get_current_toggle() {
-            if toggle.list_input_active {
-                toggle.list = toggle.list_input
-                    .split(',')
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .collect();
-                toggle.list_input_active = false;
-                toggle.list_input.clear();
-            }
-        }
-    }
-
-    fn cancel_list_input(&mut self) {
-        if let Some(toggle) = self.get_current_toggle() {
-            toggle.list_input_active = false;
-            toggle.list_input.clear();
-        }
-    }
-
     fn start_editing_setting(&mut self) {
-        match self.settings_cursor {
-            2 => {
-                self.settings_edit_index = Some(2);
-                self.settings_edit_cursor = self.config.recipes_url.len();
+        let category = self.settings_categories[self.active_settings_category];
+        if category == SettingsCategory::General {
+            match self.settings_cursor {
+                0 => {
+                    self.settings_edit_index = Some(0);
+                    self.settings_edit_cursor = self.config.recipes_url.len();
+                }
+                1 => {
+                    self.settings_edit_index = Some(1);
+                    self.settings_edit_cursor = self.config.solutions_url.len();
+                }
+                _ => {}
             }
-            3 => {
-                self.settings_edit_index = Some(3);
-                self.settings_edit_cursor = self.config.solutions_url.len();
-            }
-            _ => {}
         }
     }
 
@@ -351,16 +431,16 @@ impl App {
 
     fn get_editable_field(&self) -> Option<&String> {
         match self.settings_edit_index {
-            Some(2) => Some(&self.config.recipes_url),
-            Some(3) => Some(&self.config.solutions_url),
+            Some(0) => Some(&self.config.recipes_url),
+            Some(1) => Some(&self.config.solutions_url),
             _ => None,
         }
     }
 
     fn get_editable_field_mut(&mut self) -> Option<&mut String> {
         match self.settings_edit_index {
-            Some(2) => Some(&mut self.config.recipes_url),
-            Some(3) => Some(&mut self.config.solutions_url),
+            Some(0) => Some(&mut self.config.recipes_url),
+            Some(1) => Some(&mut self.config.solutions_url),
             _ => None,
         }
     }
@@ -394,6 +474,40 @@ impl App {
             if self.settings_edit_cursor < field.len() {
                 self.settings_edit_cursor += 1;
             }
+        }
+    }
+
+    fn set_status(&mut self, msg: &str, _color: Color) {
+        self.status_message = Some((msg.to_string(), Duration::from_secs(3)));
+    }
+
+    fn update_status(&mut self) {
+        if let Some((_, duration)) = &mut self.status_message {
+            if duration.as_millis() > 0 {
+                *duration = Duration::from_millis(duration.as_millis().saturating_sub(100) as u64);
+            } else {
+                self.status_message = None;
+            }
+        }
+    }
+
+    fn is_toggle_enabled(&self, category: SettingsCategory, index: usize) -> bool {
+        match category {
+            SettingsCategory::Git => {
+                match index {
+                    0 => matches!(self.config.init_git.mode, ToggleMode::Yes | ToggleMode::YesSome),
+                    1 => matches!(self.config.create_local_gitignore.mode, ToggleMode::Yes | ToggleMode::YesSome),
+                    _ => false,
+                }
+            }
+            SettingsCategory::Actions => {
+                match index {
+                    0 => matches!(self.config.open_terminal.mode, ToggleMode::Yes | ToggleMode::YesSome),
+                    1 => matches!(self.config.open_ide.mode, ToggleMode::Yes | ToggleMode::YesSome),
+                    _ => false,
+                }
+            }
+            _ => false,
         }
     }
 }
@@ -445,117 +559,132 @@ fn run_app<B: ratatui::backend::Backend>(
                             match key.code {
                                 KeyCode::Char('q') => return Ok(()),
                                 KeyCode::Tab => {
-                                    if !app.input_mode && app.active_tab_index == 0 {
-                                        app.next_tab();
-                                    } else if app.active_tab_index == 1 {
-                                        app.previous_tab();
+                                    if !app.input_mode && app.active_main_tab == 0 {
+                                        app.next_main_tab();
+                                    } else if app.active_main_tab == 1 {
+                                        app.previous_main_tab();
                                     }
                                 }
                                 KeyCode::BackTab => {
-                                    if app.active_tab_index == 1 {
-                                        app.previous_tab();
+                                    if app.active_main_tab == 1 {
+                                        app.previous_main_tab();
                                     }
                                 }
                                 KeyCode::Left => {
-                                    if app.input_mode && app.active_tab_index == 0 {
+                                    if app.language_popup_open {
+                                        app.move_language_selection(-1);
+                                    } else if app.input_mode && app.active_main_tab == 0 {
                                         app.move_cursor_left();
-                                    } else if app.active_tab_index == 1 {
+                                    } else if app.active_main_tab == 1 {
                                         if app.settings_edit_index.is_some() {
                                             app.move_setting_cursor_left();
                                         } else {
-                                            app.move_settings_cursor(-1);
+                                            app.previous_settings_category();
                                         }
                                     }
                                 }
                                 KeyCode::Right => {
-                                    if app.input_mode && app.active_tab_index == 0 {
+                                    if app.language_popup_open {
+                                        app.move_language_selection(1);
+                                    } else if app.input_mode && app.active_main_tab == 0 {
                                         app.move_cursor_right();
-                                    } else if app.active_tab_index == 1 {
+                                    } else if app.active_main_tab == 1 {
                                         if app.settings_edit_index.is_some() {
                                             app.move_setting_cursor_right();
                                         } else {
-                                            app.move_settings_cursor(1);
+                                            app.next_settings_category();
                                         }
                                     }
                                 }
                                 KeyCode::Up => {
-                                    if app.active_tab_index == 1 {
+                                    if app.language_popup_open {
+                                        app.move_language_selection(-1);
+                                    } else if app.active_main_tab == 1 {
                                         if app.settings_edit_index.is_none() {
                                             app.move_settings_cursor(-1);
                                         }
-                                    } else if app.active_tab_index == 0 {
+                                    } else if app.active_main_tab == 0 {
                                         app.scroll_projects(-1);
                                     }
                                 }
                                 KeyCode::Down => {
-                                    if app.active_tab_index == 1 {
+                                    if app.language_popup_open {
+                                        app.move_language_selection(1);
+                                    } else if app.active_main_tab == 1 {
                                         if app.settings_edit_index.is_none() {
                                             app.move_settings_cursor(1);
                                         }
-                                    } else if app.active_tab_index == 0 {
+                                    } else if app.active_main_tab == 0 {
                                         app.scroll_projects(1);
                                     }
                                 }
                                 KeyCode::Enter => {
-                                    if !app.input_mode && app.active_tab_index == 0 {
+                                    if app.language_popup_open {
+                                        app.confirm_language_selection();
+                                    } else if !app.input_mode && app.active_main_tab == 0 {
                                         app.enter_input_mode();
-                                    } else if app.input_mode && app.active_tab_index == 0 {
+                                    } else if app.input_mode && app.active_main_tab == 0 {
                                         app.submit_url();
-                                    } else if app.active_tab_index == 1 {
+                                    } else if app.active_main_tab == 1 {
                                         if app.settings_edit_index.is_some() {
                                             app.stop_editing_setting();
-                                        } else if app.settings_cursor == 2 || app.settings_cursor == 3 {
-                                            app.start_editing_setting();
                                         } else {
-                                            app.toggle_setting();
+                                            let category = app.settings_categories[app.active_settings_category];
+                                            if category == SettingsCategory::General {
+                                                app.start_editing_setting();
+                                            } else {
+                                                app.toggle_setting();
+                                            }
                                         }
                                     }
                                 }
                                 KeyCode::Esc => {
-                                    if app.input_mode {
+                                    if app.language_popup_open {
+                                        app.close_language_popup();
+                                    } else if app.input_mode {
                                         app.leave_input_mode();
-                                    } else if app.active_tab_index == 1 {
+                                    } else if app.active_main_tab == 1 {
                                         if app.settings_edit_index.is_some() {
                                             app.stop_editing_setting();
-                                        } else {
-                                            app.cancel_list_input();
                                         }
                                     }
                                 }
                                 KeyCode::Backspace => {
-                                    if app.input_mode && app.active_tab_index == 0 {
+                                    if app.language_popup_open {
+                                        app.delete_language_search_char();
+                                    } else if app.input_mode && app.active_main_tab == 0 {
                                         app.delete_char();
-                                    } else if app.active_tab_index == 1 {
+                                    } else if app.active_main_tab == 1 {
                                         if app.settings_edit_index.is_some() {
                                             app.delete_setting_char();
-                                        } else {
-                                            app.delete_list_input_char();
                                         }
                                     }
                                 }
                                 KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                                    if app.input_mode && app.active_tab_index == 0 {
+                                    if app.input_mode && app.active_main_tab == 0 {
                                         app.paste_from_clipboard();
                                     }
                                 }
-                                KeyCode::Char('l') => {
-                                    if app.input_mode && app.active_tab_index == 0 {
+                                KeyCode::Char('ё') | KeyCode::Char('`') => {
+                                    if app.active_main_tab == 0 && !app.input_mode {
+                                        app.open_language_popup();
+                                    } else if app.input_mode && app.active_main_tab == 0 {
                                         app.cycle_language();
                                     }
                                 }
                                 KeyCode::Char(' ') => {
-                                    if app.active_tab_index == 1 && app.settings_edit_index.is_none() {
+                                    if app.active_main_tab == 1 && app.settings_edit_index.is_none() {
                                         app.toggle_setting();
                                     }
                                 }
                                 KeyCode::Char(c) => {
-                                    if app.input_mode && app.active_tab_index == 0 {
+                                    if app.language_popup_open {
+                                        app.insert_language_search_char(c);
+                                    } else if app.input_mode && app.active_main_tab == 0 {
                                         app.insert_char(c);
-                                    } else if app.active_tab_index == 1 {
+                                    } else if app.active_main_tab == 1 {
                                         if app.settings_edit_index.is_some() {
                                             app.insert_setting_char(c);
-                                        } else {
-                                            app.update_list_input(c);
                                         }
                                     }
                                 }
@@ -583,6 +712,7 @@ fn run_app<B: ratatui::backend::Backend>(
             if let AppState::Creating { .. } = app.state {
                 app.update_creation();
             }
+            app.update_status();
             last_tick = std::time::Instant::now();
         }
     }
@@ -593,7 +723,7 @@ fn ui(f: &mut Frame, app: &App) {
 
     let main_chunks = Layout::default()
         .direction(Direction::Vertical)
-        .margin(1)
+        .margin(0)
         .constraints([
             Constraint::Length(3),
             Constraint::Min(10),
@@ -601,15 +731,34 @@ fn ui(f: &mut Frame, app: &App) {
         ])
         .split(size);
 
+    render_tabs(f, app, main_chunks[0]);
+
+    if app.active_main_tab == 0 {
+        render_recipes_tab(f, app, main_chunks[1]);
+    } else {
+        render_settings_tab(f, app, main_chunks[1]);
+    }
+
+    render_status_bar(f, app, main_chunks[2]);
+
+    if app.language_popup_open {
+        render_language_popup(f, app);
+    }
+}
+
+fn render_tabs(f: &mut Frame, app: &App, area: Rect) {
     let titles: Vec<Line> = app
-        .tabs
+        .main_tabs
         .iter()
         .enumerate()
         .map(|(i, t)| {
-            let style = if app.active_tab_index == i {
-                Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
+            let style = if app.active_main_tab == i {
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Rgb(0, 150, 0))
+                    .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(Color::Cyan)
+                Style::default().fg(Color::Gray)
             };
             Line::from(Span::styled(*t, style))
         })
@@ -619,78 +768,87 @@ fn ui(f: &mut Frame, app: &App) {
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(" solution_create ")
-                .border_style(Style::default().fg(Color::DarkGray)),
+                .border_style(Style::default().fg(Color::DarkGray))
+                .title(Line::from(vec![
+                    Span::styled("solution_create", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                ]))
+                .title_alignment(Alignment::Center),
         )
-        .select(app.active_tab_index)
+        .select(app.active_main_tab)
         .style(Style::default().fg(Color::White))
         .highlight_style(
             Style::default()
-                .fg(Color::Green)
+                .fg(Color::Black)
+                .bg(Color::Green)
                 .add_modifier(Modifier::BOLD),
         );
 
-    f.render_widget(tabs, main_chunks[0]);
+    f.render_widget(tabs, area);
+}
 
-    if app.active_tab_index == 0 {
-        render_recipes_tab(f, app, main_chunks[1]);
-    } else {
-        render_settings_tab(f, app, main_chunks[1]);
-    }
-
-    let footer_text = if let AppState::Creating { stage, .. } = &app.state {
+fn render_status_bar(f: &mut Frame, app: &App, area: Rect) {
+    let status_text = if let AppState::Creating { stage, .. } = &app.state {
         Line::from(vec![
             Span::styled(app.creation_stages[*stage], Style::default().fg(Color::Yellow)),
         ])
     } else if let AppState::Done = &app.state {
         Line::from(vec![
-            Span::styled("✓ Project created! Press Enter to continue", Style::default().fg(Color::Green)),
+            Span::styled("Project created! Press Enter to continue", Style::default().fg(Color::Green)),
         ])
-    } else if app.active_tab_index == 0 {
+    } else if let Some((msg, _)) = &app.status_message {
         Line::from(vec![
-            Span::styled("[Ctrl+V]", Style::default().fg(Color::Yellow)),
-            Span::raw(" Paste "),
-            Span::styled("[l]", Style::default().fg(Color::Yellow)),
-            Span::raw(" Cycle Lang "),
-            Span::styled("[↑/↓]", Style::default().fg(Color::Yellow)),
-            Span::raw(" Scroll "),
-            Span::styled("[Enter]", Style::default().fg(Color::Yellow)),
-            Span::raw(" Create "),
-            Span::styled("[Tab]", Style::default().fg(Color::Yellow)),
-            Span::raw(" Settings "),
-            Span::styled("[q]", Style::default().fg(Color::Yellow)),
+            Span::raw(msg.clone()),
+        ])
+    } else if app.active_main_tab == 0 {
+        Line::from(vec![
+            Span::styled("Ctrl+V", Style::default().fg(Color::Cyan)),
+            Span::raw(" Paste  "),
+            Span::styled("ё", Style::default().fg(Color::Cyan)),
+            Span::raw(" Language  "),
+            Span::styled("↑/↓", Style::default().fg(Color::Cyan)),
+            Span::raw(" Scroll  "),
+            Span::styled("Enter", Style::default().fg(Color::Green)),
+            Span::raw(" Create  "),
+            Span::styled("Tab", Style::default().fg(Color::Magenta)),
+            Span::raw(" Settings  "),
+            Span::styled("q", Style::default().fg(Color::Red)),
             Span::raw(" Quit"),
         ])
     } else {
         Line::from(vec![
-            Span::styled("[Enter]", Style::default().fg(Color::Yellow)),
-            Span::raw(" Edit/Toggle "),
-            Span::styled("[↑/↓]", Style::default().fg(Color::Yellow)),
-            Span::raw(" Navigate "),
-            Span::styled("[Tab]", Style::default().fg(Color::Yellow)),
-            Span::raw(" Recipes "),
-            Span::styled("[q]", Style::default().fg(Color::Yellow)),
+            Span::styled("Enter/Space", Style::default().fg(Color::Green)),
+            Span::raw(" Toggle  "),
+            Span::styled("↑/↓", Style::default().fg(Color::Cyan)),
+            Span::raw(" Navigate  "),
+            Span::styled("←/→", Style::default().fg(Color::Magenta)),
+            Span::raw(" Categories  "),
+            Span::styled("Tab", Style::default().fg(Color::Magenta)),
+            Span::raw(" Recipes  "),
+            Span::styled("q", Style::default().fg(Color::Red)),
             Span::raw(" Quit"),
         ])
     };
 
-    let footer = Paragraph::new(footer_text)
+    let status = Paragraph::new(status_text)
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::DarkGray)),
+                .border_style(Style::default().fg(Color::DarkGray))
+                .title(" Status ")
+                .title_style(Style::default().fg(Color::DarkGray)),
         )
         .style(Style::default().fg(Color::White))
         .alignment(Alignment::Center);
 
-    f.render_widget(footer, main_chunks[2]);
+    f.render_widget(status, area);
 }
 
 fn render_recipes_tab(f: &mut Frame, app: &App, area: Rect) {
     match &app.state {
         AppState::Input | AppState::Done => {
-            let content_chunks = Layout::default()
+            let left_chunks = Layout::default()
                 .direction(Direction::Vertical)
+                .margin(1)
                 .constraints([
                     Constraint::Length(3),
                     Constraint::Length(3),
@@ -698,41 +856,55 @@ fn render_recipes_tab(f: &mut Frame, app: &App, area: Rect) {
                 ])
                 .split(area);
 
+            let input_style = if app.input_mode && app.focus_section == FocusSection::UrlInput {
+                Style::default().fg(Color::Yellow)
+            } else {
+                Style::default().fg(Color::White)
+            };
+
             let input_widget = Paragraph::new(app.url_input.as_str())
-                .style(Style::default().fg(if app.input_mode { Color::Yellow } else { Color::White }))
+                .style(input_style)
                 .block(
                     Block::default()
                         .borders(Borders::ALL)
-                        .title(" URL Input ")
-                        .border_style(Style::default().fg(Color::White)),
-                )
-                .wrap(Wrap { trim: false });
+                        .title(" Project Name ")
+                        .border_style(Style::default().fg(if app.input_mode { Color::Yellow } else { Color::DarkGray }))
+                        .padding(Padding::horizontal(1)),
+                );
 
-            f.render_widget(input_widget, content_chunks[0]);
+            f.render_widget(input_widget, left_chunks[0]);
 
             if app.input_mode {
                 f.set_cursor_position((
-                    content_chunks[0].x + app.cursor_position as u16 + 1,
-                    content_chunks[0].y + 1,
+                    left_chunks[0].x + app.cursor_position as u16 + 1,
+                    left_chunks[0].y + 1,
                 ));
             }
 
             let selected_lang = app.selected_language();
             let lang_color = get_language_color(&selected_lang);
 
+            let lang_style = if app.focus_section == FocusSection::Language && !app.input_mode {
+                Style::default().fg(lang_color).bg(Color::DarkGray).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(lang_color).add_modifier(Modifier::BOLD)
+            };
+
             let lang_widget = Paragraph::new(selected_lang.as_str())
-                .style(Style::default().fg(lang_color).add_modifier(Modifier::BOLD))
+                .style(lang_style)
                 .block(
                     Block::default()
                         .borders(Borders::ALL)
-                        .title(" Language (l to cycle, Enter to select) ")
-                        .border_style(Style::default().fg(Color::White)),
+                        .title(" Language (ё to change) ")
+                        .border_style(Style::default().fg(Color::DarkGray))
+                        .padding(Padding::horizontal(1)),
                 )
                 .alignment(Alignment::Center);
 
-            f.render_widget(lang_widget, content_chunks[1]);
+            f.render_widget(lang_widget, left_chunks[1]);
 
-            let visible_projects = 5;
+            let visible_projects = area.height.saturating_sub(6) as usize;
+            let visible_projects = if visible_projects < 1 { 1 } else { visible_projects };
             let start = app.projects_scroll;
 
             let projects: Vec<ListItem> = app
@@ -744,11 +916,10 @@ fn render_recipes_tab(f: &mut Frame, app: &App, area: Rect) {
                     let lang_color = get_language_color(lang);
                     let content = Line::from(vec![
                         Span::styled(
-                            format!("{:<8}", lang),
+                            format!("{:<12}", lang),
                             Style::default().fg(lang_color).add_modifier(Modifier::BOLD),
                         ),
-                        Span::styled("▸", Style::default().fg(Color::DarkGray)),
-                        Span::raw(" "),
+                        Span::styled(" > ", Style::default().fg(Color::DarkGray)),
                         Span::raw(name),
                     ]);
                     ListItem::new(content)
@@ -766,11 +937,12 @@ fn render_recipes_tab(f: &mut Frame, app: &App, area: Rect) {
                     Block::default()
                         .borders(Borders::ALL)
                         .title(format!(" Recent Projects{} ", scroll_info))
-                        .border_style(Style::default().fg(Color::White)),
+                        .border_style(Style::default().fg(Color::DarkGray))
+                        .padding(Padding::horizontal(1)),
                 )
                 .style(Style::default().fg(Color::White));
 
-            f.render_widget(projects_list, content_chunks[2]);
+            f.render_widget(projects_list, left_chunks[2]);
         }
         AppState::Creating { progress, stage } => {
             render_creation_screen(f, app, area, *progress, *stage);
@@ -780,9 +952,11 @@ fn render_recipes_tab(f: &mut Frame, app: &App, area: Rect) {
 
 fn get_language_color(lang: &str) -> Color {
     match lang.to_lowercase().as_str() {
-        "go" => Color::Cyan,
+        "go" => Color::Rgb(0, 200, 200),
         "rust" => Color::Rgb(255, 100, 100),
-        "python" => Color::Rgb(100, 100, 255),
+        "python" => Color::Rgb(100, 150, 255),
+        "javascript" | "js" => Color::Rgb(255, 200, 50),
+        "typescript" | "ts" => Color::Rgb(50, 150, 255),
         _ => Color::White,
     }
 }
@@ -804,7 +978,8 @@ fn render_creation_screen(f: &mut Frame, app: &App, area: Rect, progress: f64, s
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Green)),
+                .border_style(Style::default().fg(Color::Green))
+                .padding(Padding::horizontal(1)),
         );
 
     f.render_widget(title, chunks[0]);
@@ -821,8 +996,8 @@ fn render_creation_screen(f: &mut Frame, app: &App, area: Rect, progress: f64, s
             } else {
                 Style::default().fg(Color::DarkGray)
             };
-            let prefix = if i < stage { "✓ " } else if i == stage { "► " } else { "  " };
-            ListItem::new(Line::from(Span::styled(format!("{}{}", prefix, s), style)))
+            let prefix = if i < stage { "[OK]" } else if i == stage { "[..]" } else { "[  ]" };
+            ListItem::new(Line::from(Span::styled(format!(" {} {}", prefix, s), style)))
         })
         .collect();
 
@@ -830,7 +1005,8 @@ fn render_creation_screen(f: &mut Frame, app: &App, area: Rect, progress: f64, s
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::White)),
+                .border_style(Style::default().fg(Color::White))
+                .padding(Padding::horizontal(1)),
         );
 
     f.render_widget(stages_list, chunks[1]);
@@ -844,60 +1020,87 @@ fn render_creation_screen(f: &mut Frame, app: &App, area: Rect, progress: f64, s
 }
 
 fn render_settings_tab(f: &mut Frame, app: &App, area: Rect) {
-    let settings_items = vec![
-        ("Init Git", app.get_toggle_text(&app.config.init_git), app.config.init_git.list_input_active, &app.config.init_git.list_input),
-        ("Create Local .gitignore", app.get_toggle_text(&app.config.create_local_gitignore), app.config.create_local_gitignore.list_input_active, &app.config.create_local_gitignore.list_input),
-        ("Recipes URL", app.config.recipes_url.clone(), app.settings_edit_index == Some(2), &app.config.recipes_url),
-        ("Solutions URL", app.config.solutions_url.clone(), app.settings_edit_index == Some(3), &app.config.solutions_url),
-        ("Open Terminal", app.get_toggle_text(&app.config.open_terminal), app.config.open_terminal.list_input_active, &app.config.open_terminal.list_input),
-        ("Open IDE", app.get_toggle_text(&app.config.open_ide), app.config.open_ide.list_input_active, &app.config.open_ide.list_input),
-    ];
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .margin(1)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(5),
+        ])
+        .split(area);
+
+    let category_tabs: Vec<Line> = app.settings_categories
+        .iter()
+        .enumerate()
+        .map(|(i, cat)| {
+            let style = if i == app.active_settings_category {
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Rgb(0, 100, 150))
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::Gray)
+            };
+            Line::from(Span::styled(cat.title(), style))
+        })
+        .collect();
+
+    let category_tabs_widget = Tabs::new(category_tabs)
+        .select(app.active_settings_category)
+        .style(Style::default().fg(Color::White))
+        .highlight_style(
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Rgb(0, 100, 150))
+                .add_modifier(Modifier::BOLD),
+        );
+
+    f.render_widget(category_tabs_widget, chunks[0]);
+
+    let settings_items = get_settings_for_category(app);
 
     let items: Vec<ListItem> = settings_items
         .iter()
         .enumerate()
-        .map(|(i, (label, value, is_input_active, input_text))| {
+        .map(|(i, (label, description, is_enabled, is_editing, edit_value))| {
             let is_selected = i == app.settings_cursor;
-            let is_editing = app.settings_edit_index == Some(i);
 
-            let style = if is_selected {
+            let checkbox = if *is_enabled {
+                Span::styled("[X]", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
+            } else {
+                Span::styled("[ ]", Style::default().fg(Color::DarkGray))
+            };
+
+            let row_style = if is_selected {
                 Style::default()
                     .fg(Color::Black)
-                    .bg(Color::Green)
+                    .bg(Color::Rgb(0, 150, 0))
                     .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(Color::White)
             };
 
-            let value_style = if is_selected {
-                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(Color::Cyan)
-            };
-
-            let display_value = if *is_input_active || is_editing {
+            let value_display = if *is_editing {
                 let cursor_char = if (std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() / 500) % 2 == 0 {
                     "█"
                 } else {
                     " "
                 };
-                
-                if is_editing {
-                    let text = input_text;
-                    let cursor_pos = app.settings_edit_cursor;
-                    let before: String = text.chars().take(cursor_pos).collect();
-                    let after: String = text.chars().skip(cursor_pos).collect();
-                    format!("► {}{}{}", before, cursor_char, after)
+                if let Some(val) = edit_value {
+                    format!(" {}{}{}", &val[..app.settings_edit_cursor.min(val.len())], cursor_char, &val[app.settings_edit_cursor.min(val.len())..])
                 } else {
-                    format!("► [{}]_ ", input_text)
+                    String::new()
                 }
+            } else if !edit_value.as_ref().map(|s| s.is_empty()).unwrap_or(true) {
+                format!(" {}", edit_value.as_ref().unwrap())
             } else {
-                format!("► {}", value)
+                String::new()
             };
 
             let content = Line::from(vec![
-                Span::styled(format!("{:<25}", label), style),
-                Span::styled(display_value, value_style),
+                Span::styled(format!("{}  {:<20}", checkbox, label), row_style),
+                Span::styled(description.to_string(), Style::default().fg(Color::DarkGray)),
+                Span::styled(value_display, Style::default().fg(Color::Cyan)),
             ]);
             ListItem::new(content)
         })
@@ -907,10 +1110,160 @@ fn render_settings_tab(f: &mut Frame, app: &App, area: Rect) {
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(" Configuration (Enter to edit/toggle, Esc to cancel) ")
-                .border_style(Style::default().fg(Color::White)),
+                .border_style(Style::default().fg(Color::DarkGray))
+                .padding(Padding::horizontal(1)),
         )
         .style(Style::default().fg(Color::White));
 
-    f.render_widget(settings_list, area);
+    f.render_widget(settings_list, chunks[1]);
+}
+
+fn get_settings_for_category(app: &App) -> Vec<(&'static str, &'static str, bool, bool, Option<String>)> {
+    let category = app.settings_categories[app.active_settings_category];
+    match category {
+        SettingsCategory::General => {
+            vec![
+                (
+                    "Recipes URL",
+                    "Path to recipes directory",
+                    !app.config.recipes_url.is_empty(),
+                    app.settings_edit_index == Some(0),
+                    Some(app.config.recipes_url.clone()),
+                ),
+                (
+                    "Solutions URL",
+                    "Path to solutions directory",
+                    !app.config.solutions_url.is_empty(),
+                    app.settings_edit_index == Some(1),
+                    Some(app.config.solutions_url.clone()),
+                ),
+            ]
+        }
+        SettingsCategory::Git => {
+            vec![
+                (
+                    "Init Git",
+                    "Initialize git repository",
+                    app.is_toggle_enabled(SettingsCategory::Git, 0),
+                    false,
+                    None,
+                ),
+                (
+                    "Create .gitignore",
+                    "Create local .gitignore file",
+                    app.is_toggle_enabled(SettingsCategory::Git, 1),
+                    false,
+                    None,
+                ),
+            ]
+        }
+        SettingsCategory::Actions => {
+            vec![
+                (
+                    "Open Terminal",
+                    "Open terminal after creation",
+                    app.is_toggle_enabled(SettingsCategory::Actions, 0),
+                    false,
+                    None,
+                ),
+                (
+                    "Open IDE",
+                    "Open IDE after creation",
+                    app.is_toggle_enabled(SettingsCategory::Actions, 1),
+                    false,
+                    None,
+                ),
+            ]
+        }
+    }
+}
+
+fn render_language_popup(f: &mut Frame, app: &App) {
+    let area = centered_rect(60, 50, f.area());
+
+    f.render_widget(Clear, area);
+
+    let filtered = app.get_filtered_languages();
+
+    let items: Vec<ListItem> = filtered
+        .iter()
+        .map(|(orig_idx, lang)| {
+            let lang_color = get_language_color(lang);
+            let is_selected = *orig_idx == app.selected_language_index;
+
+            let style = if is_selected {
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(lang_color)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(lang_color)
+            };
+
+            let marker = if is_selected { "> " } else { "  " };
+            ListItem::new(Line::from(Span::styled(format!("{}{}", marker, lang), style)))
+        })
+        .collect();
+
+    let search_text = if app.language_search.is_empty() {
+        "Type to filter...".to_string()
+    } else {
+        app.language_search.clone()
+    };
+
+    let search_style = if app.language_search.is_empty() {
+        Style::default().fg(Color::DarkGray)
+    } else {
+        Style::default().fg(Color::White)
+    };
+
+    let search_widget = Paragraph::new(search_text)
+        .style(search_style)
+        .block(
+            Block::default()
+                .borders(Borders::BOTTOM)
+                .border_style(Style::default().fg(Color::DarkGray))
+                .title(" Search ")
+                .padding(Padding::horizontal(1)),
+        );
+
+    let list = List::new(items)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Cyan))
+                .title(" Select Language ")
+                .padding(Padding::horizontal(1)),
+        );
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(3),
+        ])
+        .split(area);
+
+    f.render_widget(search_widget, chunks[0]);
+    f.render_widget(list, chunks[1]);
+}
+
+fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
+    let popup_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage((100 - percent_y) / 2),
+            Constraint::Percentage(percent_y),
+            Constraint::Percentage((100 - percent_y) / 2),
+        ])
+        .split(area);
+
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(popup_layout[1])[1]
 }
