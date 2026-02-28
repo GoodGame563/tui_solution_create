@@ -1,5 +1,8 @@
+use crate::exstract::{extract_slug, fetch_problem};
+use crate::generator::create_project;
 use crate::structs::{AppConfig, ToggleMode, ToggleWithList};
-use crate::utils::get_all_config;
+use crate::utils::{get_all_config, get_dict_from_dir};
+use dict::{Dict, DictIface};
 use ratatui::prelude::Color;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -82,6 +85,7 @@ pub struct App {
     pub projects_scroll: usize,
     pub settings: AllSettings,
     pub settings_categories: Vec<SettingsCategory>,
+    pub lang_to_file: Dict<String>,
     pub active_settings_category: usize,
     pub settings_cursor: usize,
     pub settings_edit_index: Option<(usize, usize)>,
@@ -132,6 +136,7 @@ impl App {
                 ("Go".to_string(), "api-gateway".to_string()),
                 ("Rust".to_string(), "blockchain-node".to_string()),
             ],
+            lang_to_file: get_dict_from_dir(&settings.recipes_url),
             projects_scroll: 0,
             settings: settings,
             settings_categories: SettingsCategory::all(),
@@ -142,14 +147,7 @@ impl App {
             list_edit_index: None,
             list_input_cursor: 0,
             state: AppState::Input,
-            creation_stages: vec![
-                "Initializing project...",
-                "Cloning repository...",
-                "Installing dependencies...",
-                "Configuring environment...",
-                "Building solution...",
-                "Finalizing...",
-            ],
+            creation_stages: vec!["...", "Cloning repository...", "Installing dependencies..."],
             language_popup_open: false,
             language_popup_in_modal: false,
             language_search: String::new(),
@@ -166,6 +164,7 @@ impl App {
 
     fn load_languages(recipes_url: &str) -> Vec<String> {
         let mut langs = Vec::new();
+
         for config in get_all_config(recipes_url) {
             langs.push(config.name);
         }
@@ -188,6 +187,7 @@ impl App {
         self.language_popup_in_modal = false;
         self.language_search.clear();
         self.languages = Self::load_languages(&self.settings.recipes_url);
+        self.lang_to_file = get_dict_from_dir(&self.settings.recipes_url);
         self.language_search_cursor = 0;
         self.language_filtered_index = 0;
     }
@@ -562,9 +562,32 @@ impl App {
         }
     }
 
-    pub fn update_creation(&mut self) {
+    pub async fn update_creation(&mut self) {
         if let AppState::Creating { progress, stage } = &mut self.state {
-            *progress += 0.02;
+            println!("{:?}", *stage);
+            *progress += 0.1;
+            // *stage = 1;
+            if *stage == 0 {
+                let slug = extract_slug(&self.url_input);
+                let problem = fetch_problem(&slug).await.unwrap();
+                *progress = 1.0
+            }
+            if *stage == 1 {
+                let slug = extract_slug(&self.url_input);
+                let select_lang = self
+                    .languages
+                    .get(self.selected_language_index)
+                    .cloned()
+                    .unwrap_or_else(|| "unknown".to_string());
+                let lang = self.lang_to_file.get(&select_lang).unwrap();
+                create_project(
+                    &format!("{}_{}", select_lang, slug),
+                    lang,
+                    &self.settings.to_config(),
+                )
+                .unwrap();
+                *progress = 1.0
+            }
             if *progress >= 1.0 {
                 *progress = 0.0;
                 *stage += 1;

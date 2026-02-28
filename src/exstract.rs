@@ -6,14 +6,14 @@ use reqwest::{
 };
 use serde_json::{Value, json};
 
-fn extract_slug(url: &str) -> String {
+pub fn extract_slug(url: &str) -> String {
     let re = Regex::new(r"/problems/([^/]+)").unwrap();
     re.captures(url)
         .and_then(|c| c.get(1).map(|m| m.as_str().to_string()))
         .unwrap_or_else(|| "find-triangular-sum-of-an-array".to_string())
 }
 
-async fn fetch_problem(slug: &str) -> Result<LeetCodeProblem, Box<dyn std::error::Error>> {
+pub async fn fetch_problem(slug: &str) -> Result<LeetCodeProblem, Box<dyn std::error::Error>> {
     let problem_url: String = format!("https://leetcode.com/problems/{}/", slug);
     let graphql_url: &str = "https://leetcode.com/graphql";
 

@@ -20,7 +20,8 @@ use app::App;
 use input::handle_input;
 use ui::ui;
 
-fn main() -> Result<(), io::Error> {
+#[tokio::main]
+async fn main() -> Result<(), io::Error> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
@@ -28,7 +29,7 @@ fn main() -> Result<(), io::Error> {
     let mut terminal = Terminal::new(backend)?;
 
     let mut app = App::new();
-    let res = run_app(&mut terminal, &mut app);
+    let res = run_app(&mut terminal, &mut app).await;
 
     disable_raw_mode()?;
     execute!(
@@ -45,7 +46,7 @@ fn main() -> Result<(), io::Error> {
     Ok(())
 }
 
-fn run_app<B: ratatui::backend::Backend>(
+async fn run_app<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
     app: &mut App,
 ) -> io::Result<()> {
@@ -73,7 +74,7 @@ fn run_app<B: ratatui::backend::Backend>(
 
         if last_tick.elapsed() >= tick_rate {
             if let app::AppState::Creating { .. } = app.state {
-                app.update_creation();
+                app.update_creation().await;
             }
             app.update_status();
             last_tick = std::time::Instant::now();

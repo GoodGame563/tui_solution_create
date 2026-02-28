@@ -1,4 +1,5 @@
 use crate::structs::ConfigFileCreation as Config;
+use dict::{Dict, DictIface};
 use std::error::Error;
 use std::{fmt, fs};
 
@@ -58,4 +59,21 @@ pub fn get_all_config(dir: &str) -> Vec<Config> {
         }
     }
     configs
+}
+
+pub fn get_dict_from_dir(dir: &str) -> Dict<String> {
+    let mut dict = Dict::<String>::new();
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path().to_str().unwrap_or("lol").to_string();
+            let config = match get_config_from_path(&path) {
+                Ok(c) => c,
+                Err(_) => {
+                    continue;
+                }
+            };
+            dict.add(config.name, path);
+        }
+    }
+    dict
 }

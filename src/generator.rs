@@ -7,15 +7,13 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
-pub fn create_project(project_name: &str, language: &str, app_config: &AppConfig) -> Result<()> {
-    let path = format!("{}/{}.yaml", app_config.recipes_url, language);
-    let config: Config = get_config_from_path(&path)?;
+pub fn create_project(project_name: &str, path: &str, app_config: &AppConfig) -> Result<()> {
+    let config: Config = get_config_from_path(path)?;
     let base_path = format!("{}/{}", app_config.solutions_url, project_name);
     let base = Path::new(&base_path);
     fs::create_dir_all(base)?;
     for f in &config.folders {
         fs::create_dir_all(base.join(f))?;
-        println!("  {}", f);
     }
     for f in &config.files {
         let content = f.content.replace("{{name}}", project_name);
@@ -24,7 +22,6 @@ pub fn create_project(project_name: &str, language: &str, app_config: &AppConfig
             fs::create_dir_all(parent)?;
         }
         fs::write(&path, content)?;
-        println!("  {}", f.path);
     }
 
     for cmd in &config.commands {
@@ -40,9 +37,13 @@ pub fn create_project(project_name: &str, language: &str, app_config: &AppConfig
         c.args(&processed[1..]);
         c.current_dir(base);
 
-        println!("   {}", processed.join(" "));
         let _ = c.status();
     }
+    match app_config.create_local_gitignore.mode {
+        crate::structs::ToggleMode::No => return Ok(()),
+        crate::structs::ToggleMode::Yes => {}
+        crate::structs::ToggleMode::YesSome => for el in &app_config.create_local_gitignore.list {},
+    };
     Ok(())
 }
 
