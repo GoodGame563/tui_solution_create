@@ -1,15 +1,15 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Deserialize, Default, Serialize)]
+#[derive(Clone, Deserialize, Default, Serialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum ToggleMode {
-    No,
     #[default]
+    No,
     Yes,
     YesSome,
 }
 
-#[derive(Debug, Clone, Deserialize, Default, Serialize)]
+#[derive(Clone, Deserialize, Default, Serialize)]
 pub struct ToggleWithList {
     pub mode: ToggleMode,
     pub list: Vec<String>,
@@ -17,9 +17,8 @@ pub struct ToggleWithList {
     pub list_input_active: bool,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct AppConfig {
-    #[serde(default)]
     pub init_git: ToggleWithList,
     #[serde(default)]
     pub create_local_gitignore: ToggleWithList,
@@ -46,18 +45,70 @@ impl Default for AppConfig {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone, Default)]
 pub struct ConfigFileCreation {
-    #[serde(default)]
     pub name: String,
     pub folders: Vec<String>,
     pub files: Vec<FileEntry>,
-    #[serde(default)]
-    pub commands: Vec<Vec<String>>
+    pub commands: Vec<Vec<String>>,
+    pub color: Option<String>,
+    pub gitignore: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug, Clone, Default)]
 pub struct FileEntry {
+    #[serde(default)]
     pub path: String,
+    #[serde(default)]
     pub content: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct LeetCodeProblem {
+    pub title: String,
+    pub difficulty: String,
+    pub description: String,
+    pub example_testcases: String,
+    pub likes: u64,
+    pub dislikes: u64,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize)]
+pub struct AllSettings {
+    pub recipes_url: String,
+    pub solutions_url: String,
+    pub init_git: ToggleWithList,
+    pub create_local_gitignore: ToggleWithList,
+    pub open_terminal: ToggleWithList,
+    pub open_ide: ToggleWithList,
+}
+
+impl AllSettings {
+    pub fn from_config(config: &AppConfig) -> Self {
+        Self {
+            recipes_url: config.recipes_url.clone(),
+            solutions_url: config.solutions_url.clone(),
+            init_git: config.init_git.clone(),
+            create_local_gitignore: config.create_local_gitignore.clone(),
+            open_terminal: config.open_terminal.clone(),
+            open_ide: config.open_ide.clone(),
+        }
+    }
+
+    pub fn to_config(&self) -> AppConfig {
+        AppConfig {
+            recipes_url: self.recipes_url.clone(),
+            solutions_url: self.solutions_url.clone(),
+            init_git: self.init_git.clone(),
+            create_local_gitignore: self.create_local_gitignore.clone(),
+            open_terminal: self.open_terminal.clone(),
+            open_ide: self.open_ide.clone(),
+        }
+    }
+}
+
+pub struct Project {
+    pub url: String,
+    pub name: String,
+    pub recipes_name: String,
 }
