@@ -52,7 +52,7 @@ pub struct ConfigFileCreation {
     pub files: Vec<FileEntry>,
     pub commands: Vec<Vec<String>>,
     pub color: Option<String>,
-    pub gitignore: Option<String>
+    pub gitignore: Option<String>,
 }
 
 #[derive(Deserialize, Debug, Clone, Default)]

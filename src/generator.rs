@@ -1,4 +1,5 @@
 use crate::structs::ConfigFileCreation as Config;
+use crate::structs::ToggleMode::{No, Yes, YesSome};
 use crate::structs::{AppConfig, LeetCodeProblem};
 use regex::Regex;
 use std::fs;
@@ -6,10 +7,17 @@ use std::fs::File;
 use std::io::Write;
 use std::path::Path;
 use std::process::Command;
-use crate::structs::ToggleMode::{No, Yes, YesSome};
 
-pub fn create_project(project_name: &str, config: &Config, app_config: &AppConfig, problem: &LeetCodeProblem) -> Result<(), String> {
-    let base_path = format!("{}/{}/{}", app_config.solutions_url, config.name, project_name);
+pub fn create_project(
+    project_name: &str,
+    config: &Config,
+    app_config: &AppConfig,
+    problem: &LeetCodeProblem,
+) -> Result<(), String> {
+    let base_path = format!(
+        "{}/{}/{}",
+        app_config.solutions_url, config.name, project_name
+    );
     let base = Path::new(&base_path);
     fs::create_dir_all(base).map_err(|e| format!("Error creating directory: {}", e))?;
     for f in &config.folders {
@@ -49,7 +57,11 @@ pub fn create_project(project_name: &str, config: &Config, app_config: &AppConfi
     let should_create_gitignore = match &app_config.create_local_gitignore.mode {
         No => false,
         Yes => true,
-        YesSome => app_config.create_local_gitignore.list.iter().any(|el| *el == config.name),
+        YesSome => app_config
+            .create_local_gitignore
+            .list
+            .iter()
+            .any(|el| *el == config.name),
     };
 
     if should_create_gitignore {
@@ -73,7 +85,11 @@ pub fn create_project(project_name: &str, config: &Config, app_config: &AppConfi
     let should_open_terminal = match &app_config.open_terminal.mode {
         No => false,
         Yes => true,
-        YesSome => app_config.open_terminal.list.iter().any(|el| *el == config.name),
+        YesSome => app_config
+            .open_terminal
+            .list
+            .iter()
+            .any(|el| *el == config.name),
     };
 
     if should_open_terminal {
@@ -99,12 +115,12 @@ pub fn create_project(project_name: &str, config: &Config, app_config: &AppConfi
     Ok(())
 }
 
-fn create_gitignore(path: &str, ignore: &str)->Result<(), String> {
+fn create_gitignore(path: &str, ignore: &str) -> Result<(), String> {
     let filename = format!(".gitignore");
     let mut file = File::create(format!("{}/{}", path, filename))
         .map_err(|e| format!("Error creating README: {}", e))?;
     file.write_all(ignore.as_bytes())
-            .map_err(|e| format!("Error writing README: {}", e))?;
+        .map_err(|e| format!("Error writing README: {}", e))?;
     Ok(())
 }
 

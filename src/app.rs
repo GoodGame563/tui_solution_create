@@ -1,7 +1,8 @@
 use crate::exstract::{extract_slug, fetch_problem};
 use crate::generator::create_project;
 use crate::structs::{
-    AllSettings, AppConfig, ConfigFileCreation, LeetCodeProblem, Project, ToggleMode, ToggleWithList
+    AllSettings, AppConfig, ConfigFileCreation, LeetCodeProblem, Project, ToggleMode,
+    ToggleWithList,
 };
 use crate::utils::{get_all_config, get_all_projects};
 use std::time::Duration;
@@ -69,7 +70,7 @@ pub enum AppState {
         stage_progress: f64,
         total_progress: f64,
         status_message: String,
-        problem:Option<LeetCodeProblem>
+        problem: Option<LeetCodeProblem>,
     },
     Done,
 }
@@ -150,10 +151,10 @@ impl App {
         }
     }
 
-    pub fn get_update_recipes(&mut self){
+    pub fn get_update_recipes(&mut self) {
         self.recipes = get_all_config(&self.settings.recipes_url);
     }
-    pub fn get_update_projects(&mut self){
+    pub fn get_update_projects(&mut self) {
         self.projects = get_all_projects(&self.settings.solutions_url);
     }
 
@@ -546,7 +547,7 @@ impl App {
             stage_progress: 0.0,
             total_progress: 0.0,
             status_message: "Starting project creation...".to_string(),
-            problem: None
+            problem: None,
         };
     }
 
@@ -562,7 +563,7 @@ impl App {
             stage_progress,
             total_progress,
             status_message,
-            problem
+            problem,
         } = &mut self.state
         {
             match current_stage {
@@ -601,15 +602,19 @@ impl App {
                     } else if *stage_progress < 1.0 {
                         match problem {
                             Some(p) => {
-                                create_project(&slug, &selected_config, &self.settings.to_config(), &p)
-                            .map_err(|e| format!("Error creating project: {}", e))?;
-                        *stage_progress = 1.0;
-                        *current_stage = CreationStage::RunningCommands;
-                        *stage_progress = 0.0;
-                            },
+                                create_project(
+                                    &slug,
+                                    &selected_config,
+                                    &self.settings.to_config(),
+                                    &p,
+                                )
+                                .map_err(|e| format!("Error creating project: {}", e))?;
+                                *stage_progress = 1.0;
+                                *current_stage = CreationStage::RunningCommands;
+                                *stage_progress = 0.0;
+                            }
                             None => return Err("Filed get problem".to_string()),
                         }
-                        
                     }
                 }
                 CreationStage::RunningCommands => {
