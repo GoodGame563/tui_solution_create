@@ -1,10 +1,9 @@
 use crate::exstract::{extract_slug, fetch_problem};
 use crate::generator::create_project;
-use crate::structs::{AppConfig, ToggleMode, ToggleWithList};
-use crate::utils::{get_all_config, get_dict_from_dir};
-use dict::{Dict, DictIface};
-use ratatui::prelude::Color;
-use serde::{Deserialize, Serialize};
+use crate::structs::{
+    AllSettings, AppConfig, ConfigFileCreation, LeetCodeProblem, Project, ToggleMode, ToggleWithList
+};
+use crate::utils::{get_all_config, get_all_projects};
 use std::time::Duration;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -32,44 +31,46 @@ impl SettingsCategory {
     }
 }
 
-/// Все настройки приложения в одной структуре для удобного доступа
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct AllSettings {
-    pub recipes_url: String,
-    pub solutions_url: String,
-    pub init_git: ToggleWithList,
-    pub create_local_gitignore: ToggleWithList,
-    pub open_terminal: ToggleWithList,
-    pub open_ide: ToggleWithList,
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum CreationStage {
+    ExtractingSlug,
+    FetchingProblem,
+    CreatingProject,
+    RunningCommands,
+    Finalizing,
 }
 
-impl AllSettings {
-    pub fn from_config(config: &AppConfig) -> Self {
-        Self {
-            recipes_url: config.recipes_url.clone(),
-            solutions_url: config.solutions_url.clone(),
-            init_git: config.init_git.clone(),
-            create_local_gitignore: config.create_local_gitignore.clone(),
-            open_terminal: config.open_terminal.clone(),
-            open_ide: config.open_ide.clone(),
+impl CreationStage {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            CreationStage::ExtractingSlug => "Extracting slug from URL...",
+            CreationStage::FetchingProblem => "Getting task information...",
+            CreationStage::CreatingProject => "Creating project structure...",
+            CreationStage::RunningCommands => "Executing setup commands...",
+            CreationStage::Finalizing => "Completing...",
         }
     }
 
-    pub fn to_config(&self) -> AppConfig {
-        AppConfig {
-            recipes_url: self.recipes_url.clone(),
-            solutions_url: self.solutions_url.clone(),
-            init_git: self.init_git.clone(),
-            create_local_gitignore: self.create_local_gitignore.clone(),
-            open_terminal: self.open_terminal.clone(),
-            open_ide: self.open_ide.clone(),
+    pub fn progress_weight(&self) -> f64 {
+        match self {
+            CreationStage::ExtractingSlug => 0.05,
+            CreationStage::FetchingProblem => 0.25,
+            CreationStage::CreatingProject => 0.40,
+            CreationStage::RunningCommands => 0.20,
+            CreationStage::Finalizing => 0.10,
         }
     }
 }
 
 pub enum AppState {
     Input,
-    Creating { progress: f64, stage: usize },
+    Creating {
+        current_stage: CreationStage,
+        stage_progress: f64,
+        total_progress: f64,
+        status_message: String,
+        problem:Option<LeetCodeProblem>
+    },
     Done,
 }
 
@@ -79,13 +80,12 @@ pub struct App {
     pub url_input: String,
     pub cursor_position: usize,
     pub input_active: bool,
-    pub languages: Vec<String>,
-    pub selected_language_index: usize,
-    pub projects: Vec<(String, String)>,
+    pub projects: Vec<Project>,
     pub projects_scroll: usize,
+    pub selected_recipe: Option<ConfigFileCreation>,
+    pub recipes: Vec<ConfigFileCreation>,
     pub settings: AllSettings,
     pub settings_categories: Vec<SettingsCategory>,
-    pub lang_to_file: Dict<String>,
     pub active_settings_category: usize,
     pub settings_cursor: usize,
     pub settings_edit_index: Option<(usize, usize)>,
@@ -93,7 +93,6 @@ pub struct App {
     pub list_edit_index: Option<usize>,
     pub list_input_cursor: usize,
     pub state: AppState,
-    pub creation_stages: Vec<&'static str>,
     pub language_popup_open: bool,
     pub language_popup_in_modal: bool,
     pub language_search: String,
@@ -118,25 +117,15 @@ impl App {
             }
         };
         let settings = AllSettings::from_config(&config);
-        let languages = Self::load_languages(&settings.recipes_url);
         Self {
             main_tabs: vec!["Recipes", "Settings"],
             active_main_tab: 0,
             url_input: String::new(),
             cursor_position: 0,
             input_active: false,
-            languages: languages.clone(),
-            selected_language_index: 0,
-            projects: vec![
-                ("Rust".to_string(), "tui-app".to_string()),
-                ("Python".to_string(), "data-scraper".to_string()),
-                ("Go".to_string(), "web-server".to_string()),
-                ("Rust".to_string(), "cli-tool".to_string()),
-                ("Python".to_string(), "automation-bot".to_string()),
-                ("Go".to_string(), "api-gateway".to_string()),
-                ("Rust".to_string(), "blockchain-node".to_string()),
-            ],
-            lang_to_file: get_dict_from_dir(&settings.recipes_url),
+            selected_recipe: None,
+            projects: get_all_projects(&settings.solutions_url),
+            recipes: get_all_config(&settings.recipes_url),
             projects_scroll: 0,
             settings: settings,
             settings_categories: SettingsCategory::all(),
@@ -147,7 +136,6 @@ impl App {
             list_edit_index: None,
             list_input_cursor: 0,
             state: AppState::Input,
-            creation_stages: vec!["...", "Cloning repository...", "Installing dependencies..."],
             language_popup_open: false,
             language_popup_in_modal: false,
             language_search: String::new(),
@@ -162,34 +150,20 @@ impl App {
         }
     }
 
-    fn load_languages(recipes_url: &str) -> Vec<String> {
-        let mut langs = Vec::new();
-
-        for config in get_all_config(recipes_url) {
-            langs.push(config.name);
-        }
-        if langs.is_empty() {
-            langs.push("None".to_string());
-        }
-        langs.sort();
-        langs
+    pub fn get_update_recipes(&mut self){
+        self.recipes = get_all_config(&self.settings.recipes_url);
     }
-
-    pub fn selected_language(&self) -> String {
-        self.languages
-            .get(self.selected_language_index)
-            .cloned()
-            .unwrap_or_else(|| "unknown".to_string())
+    pub fn get_update_projects(&mut self){
+        self.projects = get_all_projects(&self.settings.solutions_url);
     }
 
     pub fn open_language_popup(&mut self) {
         self.language_popup_open = true;
         self.language_popup_in_modal = false;
         self.language_search.clear();
-        self.languages = Self::load_languages(&self.settings.recipes_url);
-        self.lang_to_file = get_dict_from_dir(&self.settings.recipes_url);
         self.language_search_cursor = 0;
         self.language_filtered_index = 0;
+        self.get_update_recipes()
     }
 
     pub fn close_language_popup(&mut self) {
@@ -202,8 +176,11 @@ impl App {
 
     pub fn confirm_language_selection(&mut self) {
         let filtered = self.get_filtered_languages();
-        if let Some((orig_idx, _)) = filtered.get(self.language_filtered_index) {
-            self.selected_language_index = *orig_idx;
+        if let Some((orig_idx, c)) = filtered.get(self.language_filtered_index) {
+            let idx = *orig_idx;
+            if idx < self.recipes.len() {
+                self.selected_recipe = Some(c.clone());
+            }
         }
         self.language_popup_open = false;
         self.language_popup_in_modal = false;
@@ -296,19 +273,20 @@ impl App {
         }
     }
 
-    pub fn get_filtered_languages(&self) -> Vec<(usize, String)> {
+    pub fn get_filtered_languages(&self) -> Vec<(usize, ConfigFileCreation)> {
         if self.language_search.is_empty() {
-            self.languages
+            self.recipes
                 .iter()
                 .enumerate()
                 .map(|(i, lang)| (i, lang.clone()))
                 .collect()
         } else {
-            self.languages
+            self.recipes
                 .iter()
                 .enumerate()
                 .filter(|(_, lang)| {
-                    lang.to_lowercase()
+                    lang.name
+                        .to_lowercase()
                         .contains(&self.language_search.to_lowercase())
                 })
                 .map(|(i, lang)| (i, lang.clone()))
@@ -562,54 +540,130 @@ impl App {
         }
     }
 
-    pub async fn update_creation(&mut self) {
-        if let AppState::Creating { progress, stage } = &mut self.state {
-            println!("{:?}", *stage);
-            *progress += 0.1;
-            // *stage = 1;
-            if *stage == 0 {
-                let slug = extract_slug(&self.url_input);
-                let problem = fetch_problem(&slug).await.unwrap();
-                *progress = 1.0
-            }
-            if *stage == 1 {
-                let slug = extract_slug(&self.url_input);
-                let select_lang = self
-                    .languages
-                    .get(self.selected_language_index)
-                    .cloned()
-                    .unwrap_or_else(|| "unknown".to_string());
-                let lang = self.lang_to_file.get(&select_lang).unwrap();
-                create_project(
-                    &format!("{}_{}", select_lang, slug),
-                    lang,
-                    &self.settings.to_config(),
-                )
-                .unwrap();
-                *progress = 1.0
-            }
-            if *progress >= 1.0 {
-                *progress = 0.0;
-                *stage += 1;
-                if *stage >= self.creation_stages.len() {
+    pub fn start_creation(&mut self) {
+        self.state = AppState::Creating {
+            current_stage: CreationStage::ExtractingSlug,
+            stage_progress: 0.0,
+            total_progress: 0.0,
+            status_message: "Starting project creation...".to_string(),
+            problem: None
+        };
+    }
+
+    pub async fn update_creation(&mut self) -> Result<bool, String> {
+        let slug_opt = extract_slug(&self.url_input);
+        let selected_config = match &self.selected_recipe {
+            Some(c) => c,
+            None => return Err("Recipes not selected".to_string()),
+        };
+        let slug = slug_opt.clone().ok_or("Invalid URL")?;
+        if let AppState::Creating {
+            current_stage,
+            stage_progress,
+            total_progress,
+            status_message,
+            problem
+        } = &mut self.state
+        {
+            match current_stage {
+                CreationStage::ExtractingSlug => {
+                    *stage_progress += 0.2;
+                    *status_message = format!("Slug: {}", slug);
+                    if *stage_progress >= 1.0 {
+                        *current_stage = CreationStage::FetchingProblem;
+                        *stage_progress = 0.0;
+                    }
+                }
+                CreationStage::FetchingProblem => {
+                    *status_message = "Loading task information...".to_string();
+                    *problem = match fetch_problem(&slug).await {
+                        Ok(problem) => {
+                            *status_message = format!("Task: {}", problem.title);
+                            *stage_progress = 1.0;
+                            *current_stage = CreationStage::CreatingProject;
+                            *stage_progress = 0.0;
+                            Some(problem)
+                        }
+                        Err(e) => {
+                            return Err(format!("Error fetching task: {}", e));
+                        }
+                    }
+                }
+                CreationStage::CreatingProject => {
+                    *status_message = format!("Creating project: {}", slug);
+
+                    if *stage_progress < 0.3 {
+                        *status_message = "Creating directories...".to_string();
+                        *stage_progress = 0.3;
+                    } else if *stage_progress < 0.6 {
+                        *status_message = "Creating files...".to_string();
+                        *stage_progress = 0.6;
+                    } else if *stage_progress < 1.0 {
+                        match problem {
+                            Some(p) => {
+                                create_project(&slug, &selected_config, &self.settings.to_config(), &p)
+                            .map_err(|e| format!("Error creating project: {}", e))?;
+                        *stage_progress = 1.0;
+                        *current_stage = CreationStage::RunningCommands;
+                        *stage_progress = 0.0;
+                            },
+                            None => return Err("Filed get problem".to_string()),
+                        }
+                        
+                    }
+                }
+                CreationStage::RunningCommands => {
+                    *status_message = "Executing setup commands...".to_string();
+                    *stage_progress = 1.0;
+                    *current_stage = CreationStage::Finalizing;
+                    *stage_progress = 0.0;
+                }
+                CreationStage::Finalizing => {
+                    *status_message = "Finalizing...".to_string();
+                    *stage_progress = 1.0;
+
                     self.state = AppState::Done;
-                    self.projects
-                        .insert(0, (self.selected_language(), self.url_input.clone()));
-                    self.set_status(
-                        &format!("Project '{}' created!", self.url_input),
-                        Color::Green,
-                    );
-                    self.url_input.clear();
-                    self.cursor_position = 0;
+                    self.set_status(&format!("Project '{}' created!", slug));
+                    self.clear_url_input();
+                    return Ok(true);
                 }
             }
+
+            *total_progress = calculate_total_progress(*current_stage, *stage_progress);
         }
+        Ok(false)
     }
 
     pub fn reset_creation(&mut self) {
         self.state = AppState::Input;
     }
 
+    pub fn clear_url_input(&mut self) {
+        self.url_input.clear();
+        self.cursor_position = 0;
+    }
+}
+
+fn calculate_total_progress(current: CreationStage, stage_prog: f64) -> f64 {
+    let mut total = 0.0;
+    for stage in [
+        CreationStage::ExtractingSlug,
+        CreationStage::FetchingProblem,
+        CreationStage::CreatingProject,
+        CreationStage::RunningCommands,
+        CreationStage::Finalizing,
+    ] {
+        if stage == current {
+            total += stage_prog * stage.progress_weight();
+            break;
+        } else {
+            total += stage.progress_weight();
+        }
+    }
+    total.min(1.0)
+}
+
+impl App {
     pub fn start_editing_setting(&mut self) {
         let category = self.settings_categories[self.active_settings_category];
         if category == SettingsCategory::General {
@@ -634,7 +688,7 @@ impl App {
     pub fn save_settings(&mut self) {
         let config = self.settings.to_config();
         let _: Result<(), _> = confy::store("tui-solution-create", None, &config);
-        self.set_status("Settings saved!", Color::Green);
+        self.set_status("Settings saved");
     }
 
     fn get_editable_field(&self) -> Option<&String> {
@@ -772,7 +826,7 @@ impl App {
         }
     }
 
-    pub fn set_status(&mut self, msg: &str, _color: Color) {
+    pub fn set_status(&mut self, msg: &str) {
         self.status_message = Some((msg.to_string(), Duration::from_secs(2)));
     }
 

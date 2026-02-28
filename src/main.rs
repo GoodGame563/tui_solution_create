@@ -74,7 +74,19 @@ async fn run_app<B: ratatui::backend::Backend>(
 
         if last_tick.elapsed() >= tick_rate {
             if let app::AppState::Creating { .. } = app.state {
-                app.update_creation().await;
+                match app.update_creation().await {
+                    Ok(true) => {
+                        app.get_update_projects();
+                    }
+                    Ok(false) => {
+                        app.get_update_projects();
+                    }
+                    Err(e) => {
+                        app.set_status(&e);
+                        app.reset_creation();
+                        app.get_update_projects();
+                    }
+                }
             }
             app.update_status();
             last_tick = std::time::Instant::now();

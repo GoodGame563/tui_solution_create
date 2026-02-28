@@ -142,11 +142,8 @@ fn handle_input_state(app: &mut App, key: KeyCode, modifiers: KeyModifiers) {
         }
         KeyCode::Enter => {
             if app.active_main_tab == 0 {
-                if !app.url_input.is_empty() {
-                    app.state = AppState::Creating {
-                        progress: 0.0,
-                        stage: 0,
-                    };
+                if !app.url_input.is_empty() && app.input_active {
+                    app.start_creation();
                     app.input_active = false;
                 } else {
                     app.input_active = !app.input_active;

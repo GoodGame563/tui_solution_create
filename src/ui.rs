@@ -1,5 +1,8 @@
+use std::str::FromStr;
+
 use crate::app::{App, AppState, SettingsCategory};
 use crate::settings::get_settings_for_category;
+use crate::structs::ConfigFileCreation;
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -84,11 +87,22 @@ fn render_tabs(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn render_status_bar(f: &mut Frame, app: &App, area: Rect) {
-    let status_text = if let AppState::Creating { stage, .. } = &app.state {
-        Line::from(vec![Span::styled(
-            app.creation_stages[*stage],
-            Style::default().fg(Color::Yellow),
-        )])
+    let status_text = if let AppState::Creating {
+        status_message,
+        total_progress,
+        ..
+    } = &app.state
+    {
+        let progress_pct = (*total_progress * 100.0) as u16;
+        Line::from(vec![
+            Span::styled(
+                format!("{:3}% ", progress_pct),
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(status_message, Style::default().fg(Color::Yellow)),
+        ])
     } else if let AppState::Done = &app.state {
         Line::from(vec![Span::styled(
             "Project created! Press Enter to continue",
@@ -201,8 +215,12 @@ fn render_recipes_tab(f: &mut Frame, app: &App, area: Rect) {
                 .constraints([Constraint::Length(3), Constraint::Min(5)])
                 .split(area);
 
-            let selected_lang = app.selected_language();
-            let lang_color = get_language_color(&selected_lang);
+            let select_recipe = match app.selected_recipe.as_ref() {
+                Some(s) => s,
+                None => &ConfigFileCreation::default(),
+            };
+            let selected_lang = select_recipe.name.clone();
+            let lang_color = get_color_from_name(&select_recipe.color);
 
             let input_display = if app.input_active {
                 let cursor_char = if (std::time::SystemTime::now()
@@ -264,15 +282,21 @@ fn render_recipes_tab(f: &mut Frame, app: &App, area: Rect) {
                 .iter()
                 .skip(start)
                 .take(visible_projects)
-                .map(|(lang, name)| {
-                    let lang_color = get_language_color(lang);
+                .map(|p| {
+                    let mut lang_color = Color::White;
+                    for r in &app.recipes {
+                        if r.name == p.recipes_name {
+                            lang_color = get_color_from_name(&r.color);
+                            break;
+                        }
+                    }
                     let content = Line::from(vec![
                         Span::styled(
-                            format!("{:<12}", lang),
+                            format!("{:<12}", p.recipes_name),
                             Style::default().fg(lang_color).add_modifier(Modifier::BOLD),
                         ),
                         Span::styled(" > ", Style::default().fg(Color::DarkGray)),
-                        Span::raw(name),
+                        Span::raw(&p.name),
                     ]);
                     ListItem::new(content)
                 })
@@ -296,24 +320,45 @@ fn render_recipes_tab(f: &mut Frame, app: &App, area: Rect) {
 
             f.render_widget(projects_list, left_chunks[1]);
         }
-        AppState::Creating { progress, stage } => {
-            render_creation_screen(f, app, area, *progress, *stage);
+        AppState::Creating {
+            total_progress,
+            current_stage,
+            status_message,
+            stage_progress,
+            ..
+        } => {
+            render_creation_screen(
+                f,
+                area,
+                *total_progress,
+                *current_stage,
+                status_message,
+                *stage_progress,
+            );
         }
     }
 }
 
-fn get_language_color(lang: &str) -> Color {
-    match lang.to_lowercase().as_str() {
-        "go" => Color::Rgb(0, 200, 200),
-        "rust" => Color::Rgb(255, 100, 100),
-        "python" => Color::Rgb(100, 150, 255),
-        "javascript" | "js" => Color::Rgb(255, 200, 50),
-        "typescript" | "ts" => Color::Rgb(50, 150, 255),
-        _ => Color::White,
+fn get_color_from_name(select_name: &Option<String>) -> Color {
+    match select_name {
+        Some(s) => match Color::from_str(s) {
+            Ok(c) => c,
+            Err(_) => Color::White,
+        },
+        None => return Color::White,
     }
 }
 
-fn render_creation_screen(f: &mut Frame, app: &App, area: Rect, progress: f64, stage: usize) {
+fn render_creation_screen(
+    f: &mut Frame,
+    area: Rect,
+    total_progress: f64,
+    current_stage: crate::app::CreationStage,
+    _status_message: &str,
+    stage_progress: f64,
+) {
+    use crate::app::CreationStage;
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .margin(2)
@@ -324,7 +369,7 @@ fn render_creation_screen(f: &mut Frame, app: &App, area: Rect, progress: f64, s
         ])
         .split(area);
 
-    let title = Paragraph::new("Creating Solution...")
+    let title = Paragraph::new("Создание решения...")
         .style(
             Style::default()
                 .fg(Color::Green)
@@ -340,31 +385,58 @@ fn render_creation_screen(f: &mut Frame, app: &App, area: Rect, progress: f64, s
 
     f.render_widget(title, chunks[0]);
 
-    let stages: Vec<ListItem> = app
-        .creation_stages
+    // Отображение всех стадий с индикаторами
+    let all_stages = [
+        CreationStage::ExtractingSlug,
+        CreationStage::FetchingProblem,
+        CreationStage::CreatingProject,
+        CreationStage::RunningCommands,
+        CreationStage::Finalizing,
+    ];
+
+    let stages: Vec<ListItem> = all_stages
         .iter()
         .enumerate()
-        .map(|(i, s)| {
-            let style = if i == stage {
+        .map(|(i, &stage)| {
+            let is_current = stage == current_stage;
+            let is_completed = all_stages.iter().position(|&s| s == current_stage) > Some(i);
+
+            let style = if is_current {
                 Style::default()
                     .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD)
-            } else if i < stage {
+            } else if is_completed {
                 Style::default().fg(Color::Green)
             } else {
                 Style::default().fg(Color::DarkGray)
             };
-            let prefix = if i < stage {
-                "[OK]"
-            } else if i == stage {
-                "[..]"
+
+            let prefix = if is_completed {
+                "✓"
+            } else if is_current {
+                "⋯"
             } else {
-                "[  ]"
+                "○"
             };
-            ListItem::new(Line::from(Span::styled(
-                format!(" {} {}", prefix, s),
-                style,
-            )))
+
+            let stage_progress_bar = if is_current {
+                // Мини-прогресс бар внутри стадии
+                let width = 10;
+                let filled = ((width as f64) * stage_progress.clamp(0.0, 1.0)) as usize;
+                let bar: String = (0..width)
+                    .map(|j| if j < filled { '█' } else { '░' })
+                    .collect();
+                format!(" [{}]", bar)
+            } else {
+                String::new()
+            };
+
+            ListItem::new(Line::from(vec![
+                Span::styled(prefix, style),
+                Span::raw(" "),
+                Span::styled(stage.as_str(), style),
+                Span::raw(stage_progress_bar),
+            ]))
         })
         .collect();
 
@@ -372,6 +444,7 @@ fn render_creation_screen(f: &mut Frame, app: &App, area: Rect, progress: f64, s
         Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::White))
+            .title(format!(" Этап: {} ", current_stage.as_str()))
             .padding(Padding::horizontal(1)),
     );
 
@@ -379,9 +452,9 @@ fn render_creation_screen(f: &mut Frame, app: &App, area: Rect, progress: f64, s
 
     let gauge = Gauge::default()
         .gauge_style(Style::default().fg(Color::Green))
-        .percent((progress * 100.0) as u16)
+        .percent((total_progress * 100.0) as u16)
         .label(Span::styled(
-            format!("{:.0}%", progress * 100.0),
+            format!("{:.1}%", total_progress * 100.0),
             Style::default().fg(Color::White),
         ));
 
@@ -566,7 +639,7 @@ fn render_language_popup(f: &mut Frame, app: &App) {
         .iter()
         .enumerate()
         .map(|(i, (_orig_idx, lang))| {
-            let lang_color = get_language_color(lang);
+            let lang_color = get_color_from_name(&lang.color);
             let is_selected = i == app.language_filtered_index;
 
             let style = if is_selected {
@@ -580,7 +653,7 @@ fn render_language_popup(f: &mut Frame, app: &App) {
 
             let marker = if is_selected { "> " } else { "  " };
             ListItem::new(Line::from(Span::styled(
-                format!("{}{}", marker, lang),
+                format!("{}{}", marker, lang.name),
                 style,
             )))
         })
