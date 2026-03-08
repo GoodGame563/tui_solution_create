@@ -1,5 +1,4 @@
 use crate::structs::{ConfigFileCreation as Config, Project};
-use dict::{Dict, DictIface};
 use std::error::Error;
 use std::{fmt, fs};
 
@@ -68,6 +67,9 @@ pub fn get_all_projects(dir_path: &str) -> Vec<Project> {
             if let Ok(meta) = entry.metadata() {
                 if meta.is_dir() {
                     let recipes_name = entry.file_name().into_string().unwrap_or_default();
+                    if recipes_name.starts_with('.') {
+                        continue;
+                    }
                     let recipe_path = entry.path();
                     if let Ok(inner_entries) = std::fs::read_dir(&recipe_path) {
                         for inner_entry in inner_entries.flatten() {
@@ -75,6 +77,9 @@ pub fn get_all_projects(dir_path: &str) -> Vec<Project> {
                                 if inner_meta.is_dir() {
                                     let name =
                                         inner_entry.file_name().into_string().unwrap_or_default();
+                                    if name.starts_with('.') {
+                                        continue;
+                                    }
                                     projects.push(Project {
                                         url: String::new(),
                                         name,

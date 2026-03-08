@@ -79,7 +79,9 @@ pub fn create_project(
     if should_init_git {
         let mut git_init = Command::new("git");
         git_init.arg("init").current_dir(base);
-        let _ = git_init.output();
+        let _ = git_init
+            .output()
+            .map_err(|e| format!("Error create ide {}", e))?;
     }
 
     let should_open_terminal = match &app_config.open_terminal.mode {
@@ -90,6 +92,11 @@ pub fn create_project(
             .list
             .iter()
             .any(|el| *el == config.name),
+    };
+    let should_open_ide = match &app_config.open_ide.mode {
+        No => false,
+        Yes => true,
+        YesSome => app_config.open_ide.list.iter().any(|el| *el == config.name),
     };
 
     if should_open_terminal {
@@ -111,6 +118,18 @@ pub fn create_project(
                 .spawn();
         }
     }
+
+    if should_open_ide {
+        let mut c = Command::new("cmd")
+            .arg("/C")
+            .arg("start")
+            .arg("code")
+            .arg(&base_path)
+            .spawn()
+            .map_err(|e| format!("Error start ide {}", e))?;
+        let _ = c.wait();
+        let _ = c.kill();
+    };
 
     Ok(())
 }
